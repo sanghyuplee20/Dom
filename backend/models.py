@@ -52,6 +52,7 @@ class Action(BaseModel):
     text: Optional[str] = Field("", description="Text to type (for type actions)")
     selector: Optional[str] = Field("", description="CSS selector for target element")
     xpath: Optional[str] = Field("", description="XPath for target element")
+    url: Optional[str] = Field("", description="URL for navigate actions")
     coordinates: Optional[Dict[str, float]] = None  # {x, y} for coordinate-based clicking
     wait_time: float = Field(0.5, description="Time to wait after action (seconds)")
     sequence_order: int = Field(1, description="Order in action sequence")

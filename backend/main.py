@@ -93,58 +93,83 @@ async def process_command(request: CommandRequest):
     """
     try:
         logger.info(f"Processing command: '{request.query}' for URL: {request.page_context.url}")
-        
-        # Step 1: Parse and classify the command
-        command_type = classify_command(request.query)
-        
+
+        # Step 1: Parse and classify the command using LLM
+        command_type = await classify_command_with_llm(request.query)
+
         logger.info(f"Command classified as: {command_type}")
-        
+
         if command_type == "show_numbers":
             # Step 2a: Handle "show numbers" command
             return await handle_show_numbers(request)
         elif command_type == "number_command":
             # Step 2b: Handle number-based commands (click on 2, etc.)
             return await handle_number_command(request)
+        elif command_type == "navigation":
+            # Step 2c: Handle navigation commands
+            return await handle_navigation_command(request)
         else:
-            # Step 2c: Handle action planning command
+            # Step 2d: Handle action planning command
             return await handle_action_planning(request)
-            
+
     except Exception as e:
         logger.error(f"Error processing command: {str(e)}")
-        
+
         # Return fallback response
         fallback_response = await fallback_handler.handle_error(request, str(e))
         return fallback_response
 
-def classify_command(query: str) -> str:
+async def classify_command_with_llm(query: str) -> str:
     """
-    Classify the type of command to determine processing path
+    Classify the type of command using LLM for better natural language understanding
+    """
+    try:
+        # Use the Gemini agent for classification
+        command_type = await gemini_planner.classify_command_with_llm(query)
+        return command_type
+    except Exception as e:
+        logger.error(f"LLM classification failed, using fallback: {e}")
+        return classify_command_fallback(query)
+
+
+def classify_command_fallback(query: str) -> str:
+    """
+    Fallback classification for when LLM is unavailable
     """
     query_lower = query.lower().strip()
-    
+
     # Check for "show numbers" variations
     show_numbers_patterns = [
         "show numbers", "show number", "display numbers", "number mode",
         "numbered mode", "show me numbers", "activate numbers", "turn on numbers"
     ]
-    
+
     for pattern in show_numbers_patterns:
         if pattern in query_lower:
             return "show_numbers"
-    
+
+    # Check for navigation patterns
+    navigation_patterns = [
+        "go to", "navigate to", "visit", "open",
+        "youtube.com", "google.com", "facebook.com"
+    ]
+
+    for pattern in navigation_patterns:
+        if pattern in query_lower:
+            return "navigation"
+
     # Check for direct number commands (when numbers are already showing)
-    # More comprehensive number detection patterns
+    import re
     number_patterns = [
         r'\b(click|type|press|select|choose|tap)\s+(on\s+)?(?:number\s+)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b',
         r'\b(number\s+)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b',
         r'\b(\d+)\b'
     ]
-    
-    import re
+
     for pattern in number_patterns:
         if re.search(pattern, query_lower):
             return "number_command"
-    
+
     # Default to action planning
     return "action_planning"
 
@@ -544,6 +569,46 @@ async def handle_number_command(request: CommandRequest) -> ActionSequenceRespon
         logger.error(f"Error in handle_number_command: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to process number command: {str(e)}")
 
+async def handle_navigation_command(request: CommandRequest) -> ActionSequenceResponse:
+    """
+    Handle navigation commands like "go to youtube.com"
+    """
+    try:
+        logger.info(f"Processing navigation command: {request.query}")
+
+        # Extract the target URL using LLM
+        target_url = await gemini_planner.extract_navigation_url(request.query)
+
+        logger.info(f"Extracted target URL: {target_url}")
+
+        # Create navigation action
+        navigation_action = Action(
+            id=str(uuid.uuid4()),
+            action="navigate",
+            target="website",
+            text="",
+            selector="",
+            url=target_url,
+            coordinates=None,
+            wait_time=2.0,  # Give time for page to load
+            sequence_order=1,
+            confidence=0.95
+        )
+
+        return ActionSequenceResponse(
+            command_type="action_sequence",
+            original_command=request.query,
+            actions=[navigation_action],
+            total_actions=1,
+            estimated_duration=2.0,
+            confidence_score=0.95,
+            instructions=f"Navigating to {target_url}"
+        )
+
+    except Exception as e:
+        logger.error(f"Error in handle_navigation_command: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to process navigation command: {str(e)}")
+
 def is_interactive_element(element: DOMElement) -> bool:
     """
     Determine if a DOM element is interactive and should be numbered
@@ -831,7 +896,7 @@ async def handle_action_planning(request: CommandRequest) -> ActionSequenceRespo
         # Step 1: Plan actions using Gemini
         planned_actions = await gemini_planner.plan_actions(
             voice_command=request.query,
-            page_context=request.page_context.dict()
+            page_context=request.page_context.model_dump()
         )
         
         if not planned_actions:
@@ -918,7 +983,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 # Send response back
                 await manager.send_message(client_id, {
                     "type": "response",
-                    "data": response.dict(),
+                    "data": response.model_dump(),
                     "timestamp": datetime.now().isoformat()
                 })
                 
@@ -970,7 +1035,7 @@ async def validate_command(request: CommandRequest):
     Validate a command without executing it
     """
     try:
-        command_type = classify_command(request.query)
+        command_type = classify_command_fallback(request.query)
         
         if command_type == "show_numbers":
             validation_result = {
@@ -989,8 +1054,8 @@ async def validate_command(request: CommandRequest):
         else:
             # Quick validation using Gemini
             validation_result = await gemini_planner.validate_command(
-                request.query, 
-                request.page_context.dict()
+                request.query,
+                request.page_context.model_dump()
             )
         
         return validation_result

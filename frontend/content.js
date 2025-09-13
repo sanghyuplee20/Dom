@@ -579,7 +579,11 @@ class VoiceForwardContent {
             case 'focus':
                 await this.focusAction(action);
                 break;
-                
+
+            case 'navigate':
+                await this.navigateAction(action);
+                break;
+
             default:
                 console.warn('Unknown action type:', action.action);
         }
@@ -668,8 +672,20 @@ class VoiceForwardContent {
             this.highlightElement(element);
             element.focus();
             element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            
+
             console.log('Focused element:', element);
+        }
+    }
+
+    async navigateAction(action) {
+        console.log('Navigating to:', action.url);
+
+        if (action.url) {
+            // Navigate to the URL
+            window.location.href = action.url;
+        } else {
+            console.error('Navigate action missing URL');
+            throw new Error('Navigate action requires a URL');
         }
     }
     

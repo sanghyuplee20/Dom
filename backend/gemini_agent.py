@@ -231,6 +231,58 @@ EXAMPLES:
 
 Return ONLY the JSON array:
 """)
+
+        # Command classification prompt
+        self.command_classification_prompt = ChatPromptTemplate.from_template("""
+Analyze the user's voice command and classify it into one of these types:
+
+COMMAND TYPES:
+1. "show_numbers" - User wants to see numbered elements on the page
+2. "number_command" - User is referring to numbered elements (e.g., "click number 3")
+3. "navigation" - User wants to navigate to a website or URL
+4. "action_planning" - User wants to perform actions on the current page
+
+USER COMMAND: "{voice_command}"
+
+CLASSIFICATION RULES:
+- "show_numbers": Commands like "show numbers", "display numbers", "number mode"
+- "number_command": Commands mentioning specific numbers like "click 1", "number 5", "press two"
+- "navigation": Commands like "go to youtube.com", "visit google", "open facebook", "navigate to amazon"
+- "action_planning": All other commands for page interactions
+
+EXAMPLES:
+"show me the numbers" → "show_numbers"
+"click number 3" → "number_command"
+"go to youtube.com" → "navigation"
+"search for shoes" → "action_planning"
+"visit google" → "navigation"
+"click the login button" → "action_planning"
+
+Return ONLY the classification type as a single word: show_numbers, number_command, navigation, or action_planning
+""")
+
+        # Navigation URL extraction prompt
+        self.navigation_extraction_prompt = ChatPromptTemplate.from_template("""
+Extract the target website or URL from the user's navigation command and normalize it.
+
+USER COMMAND: "{voice_command}"
+
+RULES:
+1. Extract the website name or URL mentioned
+2. Add appropriate protocol (https://) if missing
+3. Add www. if it's a common domain without subdomain
+4. Handle common site names (youtube → youtube.com, google → google.com, etc.)
+
+EXAMPLES:
+"go to youtube.com" → "https://www.youtube.com"
+"visit google" → "https://www.google.com"
+"open facebook.com" → "https://www.facebook.com"
+"navigate to amazon" → "https://www.amazon.com"
+"go to reddit.com" → "https://www.reddit.com"
+"visit github.com" → "https://github.com"
+
+Return ONLY the normalized URL as a string.
+""")
     
     def _setup_graph(self):
         """Setup LangGraph workflow"""
@@ -581,3 +633,93 @@ Do not include any other text, explanation, or markdown formatting.
         except Exception as e:
             logger.error(f"Element importance analysis failed: {e}")
             return []
+
+    async def classify_command_with_llm(self, voice_command: str) -> str:
+        """Classify command using LLM for better natural language understanding"""
+        try:
+            if not self.is_available():
+                logger.warning("Gemini not available for command classification")
+                return "action_planning"  # fallback
+
+            # Get response from Gemini
+            response = await self.llm.ainvoke(
+                self.command_classification_prompt.format(voice_command=voice_command)
+            )
+
+            # Parse the response
+            classification = response.content.strip().lower()
+
+            # Validate the classification
+            valid_classifications = ["show_numbers", "number_command", "navigation", "action_planning"]
+            if classification in valid_classifications:
+                logger.info(f"LLM classified '{voice_command}' as '{classification}'")
+                return classification
+            else:
+                logger.warning(f"Invalid classification from LLM: {classification}")
+                return "action_planning"  # fallback
+
+        except Exception as e:
+            logger.error(f"LLM command classification failed: {e}")
+            return "action_planning"  # fallback
+
+    async def extract_navigation_url(self, voice_command: str) -> str:
+        """Extract and normalize URL from navigation command"""
+        try:
+            if not self.is_available():
+                logger.warning("Gemini not available for URL extraction")
+                return self._fallback_url_extraction(voice_command)
+
+            # Get response from Gemini
+            response = await self.llm.ainvoke(
+                self.navigation_extraction_prompt.format(voice_command=voice_command)
+            )
+
+            # Parse the response
+            url = response.content.strip()
+
+            # Basic URL validation
+            if url.startswith(('http://', 'https://')):
+                logger.info(f"LLM extracted URL '{url}' from '{voice_command}'")
+                return url
+            else:
+                logger.warning(f"Invalid URL from LLM: {url}")
+                return self._fallback_url_extraction(voice_command)
+
+        except Exception as e:
+            logger.error(f"LLM URL extraction failed: {e}")
+            return self._fallback_url_extraction(voice_command)
+
+    def _fallback_url_extraction(self, voice_command: str) -> str:
+        """Fallback URL extraction using simple patterns"""
+        import re
+
+        command_lower = voice_command.lower()
+
+        # Common site mappings
+        site_mappings = {
+            'youtube': 'https://www.youtube.com',
+            'google': 'https://www.google.com',
+            'facebook': 'https://www.facebook.com',
+            'amazon': 'https://www.amazon.com',
+            'twitter': 'https://www.twitter.com',
+            'instagram': 'https://www.instagram.com',
+            'reddit': 'https://www.reddit.com',
+            'github': 'https://github.com',
+            'linkedin': 'https://www.linkedin.com',
+            'netflix': 'https://www.netflix.com',
+        }
+
+        # Check for direct site mentions
+        for site, url in site_mappings.items():
+            if site in command_lower:
+                return url
+
+        # Look for .com/.org/.net patterns
+        url_pattern = r'([a-zA-Z0-9-]+\.(?:com|org|net|edu|gov|io|co|ly))'
+        match = re.search(url_pattern, command_lower)
+        if match:
+            domain = match.group(1)
+            return f"https://www.{domain}" if not domain.startswith('www.') else f"https://{domain}"
+
+        # Default fallback
+        return "https://www.google.com"
