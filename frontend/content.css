@@ -1,4 +1,4 @@
-/* content.css - Styles for VoiceForward overlays and highlights */
+/* content.css - Styles for Dom overlays and highlights */
 
 /* Number overlay animations */
 @keyframes vfPulse {
@@ -21,27 +21,28 @@
     transform: scale(1.2) !important;
 }
 
-/* Element highlighting */
+/* Element highlighting with Dom branding colors */
 .vf-highlighted {
-    outline: 3px solid #00ff88 !important;
+    outline: 3px solid #667eea !important;
     outline-offset: 2px !important;
-    box-shadow: 0 0 0 6px rgba(0, 255, 136, 0.2) !important;
+    box-shadow: 0 0 0 6px rgba(102, 126, 234, 0.3) !important;
     transition: all 0.3s ease !important;
-    animation: vfHighlight 1s ease-in-out;
+    animation: domHighlight 1s ease-in-out;
+    border-radius: 4px !important;
 }
 
-@keyframes vfHighlight {
+@keyframes domHighlight {
     0% {
-        outline-color: #00ff88;
-        box-shadow: 0 0 0 6px rgba(0, 255, 136, 0.2);
+        outline-color: #667eea;
+        box-shadow: 0 0 0 6px rgba(102, 126, 234, 0.3);
     }
     50% {
-        outline-color: #44ff99;
-        box-shadow: 0 0 0 12px rgba(0, 255, 136, 0.4);
+        outline-color: #764ba2;
+        box-shadow: 0 0 0 12px rgba(118, 75, 162, 0.4);
     }
     100% {
-        outline-color: #00ff88;
-        box-shadow: 0 0 0 6px rgba(0, 255, 136, 0.2);
+        outline-color: #667eea;
+        box-shadow: 0 0 0 6px rgba(102, 126, 234, 0.3);
     }
 }
 
@@ -55,6 +56,9 @@ body.vf-numbers-active button:hover,
 body.vf-numbers-active input:hover,
 body.vf-numbers-active a:hover,
 body.vf-numbers-active [role="button"]:hover {
-    outline: 2px solid #4299e1 !important;
+    outline: 2px solid #667eea !important;
     outline-offset: 1px !important;
+    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.2) !important;
+    transform: translateY(-1px) !important;
+    transition: all 0.2s ease !important;
 }

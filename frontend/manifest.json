@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "VoiceForward Test Extension",
+  "name": "Dom - Accessibility Assistant",
   "version": "1.0.0",
-  "description": "Test extension for VoiceForward backend integration",
+  "description": "Voice and accessibility assistant for seamless web navigation",
   
   "permissions": [
     "activeTab",
@@ -16,7 +16,15 @@
   
   "action": {
     "default_popup": "popup.html",
-    "default_title": "VoiceForward Test"
+    "default_title": "Dom",
+    "default_icon": "logo.png"
+  },
+
+  "icons": {
+    "16": "logo.png",
+    "32": "logo.png",
+    "48": "logo.png",
+    "128": "logo.png"
   },
   
   "content_scripts": [
@@ -33,7 +41,7 @@
   
   "web_accessible_resources": [
     {
-      "resources": ["content.css"],
+      "resources": ["content.css", "logo.png"],
       "matches": ["<all_urls>"]
     }
   ]

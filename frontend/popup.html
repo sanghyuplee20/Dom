@@ -4,23 +4,37 @@
     <meta charset="utf-8">
     <style>
         body {
-            width: 350px;
-            min-height: 400px;
+            width: 370px;
+            min-height: 450px;
             margin: 0;
-            padding: 16px;
+            padding: 20px;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f8f9fa;
+            background: white;
         }
         
         .header {
             text-align: center;
-            margin-bottom: 20px;
+            margin-bottom: 24px;
+            padding: 16px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
         }
-        
+
+        .header .logo {
+            width: 40px;
+            height: 40px;
+            margin: 0 auto 8px;
+            border-radius: 50%;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
         .header h1 {
             margin: 0;
-            font-size: 18px;
+            font-size: 20px;
+            font-weight: 700;
             color: #2d3748;
+            letter-spacing: 0.5px;
         }
         
         .status {
@@ -28,11 +42,12 @@
             align-items: center;
             justify-content: center;
             gap: 8px;
-            margin-bottom: 16px;
-            padding: 8px;
-            border-radius: 6px;
-            font-size: 12px;
+            margin-bottom: 20px;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 13px;
             font-weight: 500;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
         }
         
         .status.connected {
@@ -101,12 +116,15 @@
         }
         
         .btn.primary {
-            background: #4299e1;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
         }
-        
+
         .btn.primary:hover {
-            background: #3182ce;
+            background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
         }
         
         .btn.secondary {
@@ -239,16 +257,19 @@
         }
 
         .voice-btn.record {
-            background: #e53e3e;
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
             color: white;
+            box-shadow: 0 2px 8px rgba(238, 90, 82, 0.3);
         }
 
         .voice-btn.record:hover:not(:disabled) {
-            background: #c53030;
+            background: linear-gradient(135deg, #ff5252 0%, #e53935 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(238, 90, 82, 0.4);
         }
 
         .voice-btn.record.recording {
-            background: #c53030;
+            background: linear-gradient(135deg, #ff5252 0%, #e53935 100%);
             animation: pulse 1s infinite;
         }
 
@@ -322,13 +343,10 @@
 </head>
 <body>
     <div class="header">
-        <h1>🎯 VoiceForward Test</h1>
+        <img src="logo.png" alt="Dom Logo" class="logo">
+        <h1>Dom</h1>
     </div>
     
-    <div class="status disconnected" id="status">
-        <div class="status-dot"></div>
-        <span>Checking backend...</span>
-    </div>
     
     <div class="voice-section">
         <label>🎤 Voice Command:</label>
