@@ -919,6 +919,9 @@ async def handle_action_planning(request: CommandRequest) -> ActionSequenceRespo
                 text=action.get("text", ""),
                 selector=action.get("selector", ""),
                 coordinates=action.get("coordinates"),
+                direction=action.get("direction", ""),
+                amount=action.get("amount"),
+                duration=action.get("duration"),
                 wait_time=action.get("wait_time", 0.5),
                 sequence_order=i + 1,
                 confidence=action.get("confidence", 0.8)

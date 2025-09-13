@@ -98,7 +98,7 @@ class WebActionParser(BaseOutputParser):
         }
         
         # Add optional fields if present
-        optional_fields = ["target", "text", "selector", "xpath", "coordinates", "wait_time"]
+        optional_fields = ["target", "text", "selector", "xpath", "coordinates", "wait_time", "direction", "amount", "duration", "url"]
         for field in optional_fields:
             if field in action and action[field] is not None:
                 cleaned[field] = action[field]
@@ -194,6 +194,11 @@ Voice: "scroll down and click the first article"
   {{"action": "scroll", "direction": "down", "amount": 300, "confidence": 1.0}},
   {{"action": "wait", "duration": 1, "confidence": 1.0}},
   {{"action": "click", "target": "first article link", "selector": "article:first-child a, .article:first a, h2:first a", "confidence": 0.8}}
+]
+
+Voice: "scroll up"
+[
+  {{"action": "scroll", "direction": "up", "amount": 300, "confidence": 1.0}}
 ]
 
 Voice: "fill out the contact form with my email"
@@ -430,7 +435,7 @@ Return ONLY the normalized URL as a string.
         
         # Simple fallback patterns
         if "scroll" in command:
-            direction = "down" if "down" in command else "up"
+            direction = "up" if "up" in command else "down"
             fallback_actions.append({
                 "action": "scroll",
                 "direction": direction,
@@ -527,7 +532,10 @@ Return ONLY the normalized URL as a string.
         elif "click" in simplified:
             return "click first button"
         elif "scroll" in simplified:
-            return "scroll down"
+            if "up" in simplified:
+                return "scroll up"
+            else:
+                return "scroll down"
         elif "type" in simplified or "fill" in simplified:
             return "fill first input"
         

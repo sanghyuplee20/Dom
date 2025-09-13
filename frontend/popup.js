@@ -143,8 +143,10 @@ class VoiceForwardPopup {
                 content += `<strong>Steps:</strong><br>`;
                 result.actions.forEach((action, index) => {
                     content += `${index + 1}. ${action.action}`;
+                    if (action.direction) content += ` ${action.direction}`;
                     if (action.target) content += ` → ${action.target}`;
                     if (action.text) content += ` (text: "${action.text}")`;
+                    if (action.amount) content += ` (${action.amount}px)`;
                     content += `<br>`;
                 });
             }

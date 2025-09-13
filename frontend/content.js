@@ -27,6 +27,11 @@ class VoiceForwardContent {
                     sendResponse({ success: true });
                     break;
 
+                case 'scrollUp':
+                    this.scrollUp(message.amount);
+                    sendResponse({ success: true });
+                    break;
+
                 default:
                     console.warn('Unknown message action:', message.action);
             }
@@ -639,14 +644,19 @@ class VoiceForwardContent {
     async scrollAction(action) {
         const amount = action.amount || 300;
         const direction = action.direction || 'down';
-        
+
         if (direction === 'down') {
             window.scrollBy({ top: amount, behavior: 'smooth' });
         } else if (direction === 'up') {
             window.scrollBy({ top: -amount, behavior: 'smooth' });
         }
-        
+
         console.log(`Scrolled ${direction} by ${amount}px`);
+    }
+
+    scrollUp(amount = 300) {
+        window.scrollBy({ top: -amount, behavior: 'smooth' });
+        console.log(`Scrolled up by ${amount}px`);
     }
     
     async hoverAction(action) {

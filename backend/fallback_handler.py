@@ -9,8 +9,8 @@ class FallbackHandler:
     
     def __init__(self):
         self.simple_patterns = {
-            'scroll_down': ['scroll down', 'scroll', 'page down'],
             'scroll_up': ['scroll up', 'page up', 'go up'],
+            'scroll_down': ['scroll down', 'scroll', 'page down'],
             'click': ['click', 'press', 'tap'],
             'search': ['search', 'find', 'look for'],
             'type': ['type', 'write', 'fill', 'enter'],

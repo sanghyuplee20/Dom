@@ -54,6 +54,9 @@ class Action(BaseModel):
     xpath: Optional[str] = Field("", description="XPath for target element")
     url: Optional[str] = Field("", description="URL for navigate actions")
     coordinates: Optional[Dict[str, float]] = None  # {x, y} for coordinate-based clicking
+    direction: Optional[str] = Field("", description="Direction for scroll actions (up/down)")
+    amount: Optional[int] = Field(None, description="Amount for scroll actions (pixels)")
+    duration: Optional[float] = Field(None, description="Duration for wait actions (seconds)")
     wait_time: float = Field(0.5, description="Time to wait after action (seconds)")
     sequence_order: int = Field(1, description="Order in action sequence")
     confidence: float = Field(0.8, description="Confidence score for this action")
