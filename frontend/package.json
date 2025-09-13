@@ -4,31 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "build:extension": "tsc -b && vite build --mode extension && npm run copy:extension",
-    "build:web": "tsc -b && vite build --mode web",
-    "copy:extension": "cp -r public/* dist/ && cp -r content/*.css dist/",
-    "lint": "eslint .",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "lint": "eslint . --ext .js,.ts --ignore-pattern dist/"
   },
   "devDependencies": {
-    "@eslint/js": "^9.33.0",
     "@types/chrome": "^0.1.11",
-    "@types/react": "^19.1.10",
-    "@types/react-dom": "^19.1.7",
-    "@types/ws": "^8.18.1",
-    "@vitejs/plugin-react": "^4.7.0",
-    "eslint": "^9.33.0",
-    "eslint-plugin-react-hooks": "^5.2.0",
-    "eslint-plugin-react-refresh": "^0.4.20",
-    "globals": "^16.3.0",
-    "typescript": "~5.8.3",
-    "typescript-eslint": "^8.39.1",
-    "vite": "^5.4.20"
+    "eslint": "^9.33.0"
   }
 }
