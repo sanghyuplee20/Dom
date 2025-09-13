@@ -148,34 +148,298 @@ def classify_command(query: str) -> str:
     # Default to action planning
     return "action_planning"
 
+async def filter_important_elements(elements: List[DOMElement], page_url: str, user_query: str = None) -> List[DOMElement]:
+    """
+    Use AI to filter interactive elements and only return the most important ones
+    """
+    try:
+        if not elements:
+            return elements
+
+        # Prepare element data for AI analysis with enhanced context
+        element_data = []
+        for i, element in enumerate(elements):
+            attrs = element.attributes or {}
+            full_text = (element.text_content or "").strip()
+
+            element_info = {
+                "index": i,
+                "tag": element.tag_name,
+                "text": full_text[:200],  # Increased text length for better context
+                "full_text_length": len(full_text),
+                "attributes": {
+                    "class": attrs.get("class", ""),
+                    "id": attrs.get("id", ""),
+                    "type": attrs.get("type", ""),
+                    "role": attrs.get("role", ""),
+                    "aria-label": attrs.get("aria-label", ""),
+                    "href": attrs.get("href", ""),
+                    "title": attrs.get("title", ""),
+                    "data-testid": attrs.get("data-testid", ""),
+                    "placeholder": attrs.get("placeholder", ""),
+                    # YouTube and video-specific attributes
+                    "itemprop": attrs.get("itemprop", ""),
+                    "data-context-item-id": attrs.get("data-context-item-id", ""),
+                    "data-video-id": attrs.get("data-video-id", ""),
+                    "style": attrs.get("style", "")[:100] if attrs.get("style") else ""
+                },
+                # Additional context for better decision making
+                "has_youtube_patterns": any(pattern in attrs.get("class", "").lower()
+                                          for pattern in ["ytd-", "yt-", "video", "thumbnail"]),
+                "has_href": bool(attrs.get("href")),
+                "text_length": len(full_text)
+            }
+            element_data.append(element_info)
+
+        # Create AI prompt for importance filtering
+        context = f"Page URL: {page_url}"
+        if user_query:
+            context += f"\nUser context: {user_query}"
+
+        prompt = f"""
+{context}
+
+Analyze these interactive elements and identify the most important ones that a user would likely want to interact with. Focus on:
+- Primary navigation elements (main menu, key links)
+- Core action buttons (submit, login, search, etc.)
+- Essential form fields
+- Key content interactions
+- Video/media content (video thumbnails, play buttons, video titles)
+- Content cards/items (articles, posts, products, videos)
+- Interactive content elements (like, share, comment buttons)
+
+For video platforms like YouTube:
+- Video thumbnails and titles should be labeled
+- Channel links and names
+- Playlist items
+- Subscribe, like, share buttons
+- Video player controls
+
+Avoid labeling:
+- Pure decorative elements
+- Advertisement banners (but not content ads)
+- Minor utility buttons that aren't primary actions
+- Duplicate elements
+
+Elements to analyze:
+{json.dumps(element_data, indent=2)}
+
+Return indices of important elements as a JSON array (aim for 15-25 elements). For example: [0, 2, 5, 8, 11, 14]
+"""
+
+        # Use Gemini to analyze element importance
+        important_indices = await gemini_planner.analyze_element_importance(prompt)
+
+        # If AI analysis fails, fall back to heuristic filtering
+        if not important_indices:
+            important_indices = heuristic_important_elements(elements)
+
+        # Filter elements based on AI/heuristic results
+        filtered_elements = []
+        for idx in important_indices:
+            if 0 <= idx < len(elements):
+                filtered_elements.append(elements[idx])
+
+        # Ensure we don't return too many elements (max 25 for better coverage)
+        if len(filtered_elements) > 25:
+            filtered_elements = filtered_elements[:25]
+
+        return filtered_elements
+
+    except Exception as e:
+        logger.warning(f"AI filtering failed: {str(e)}, falling back to heuristic")
+        # Fallback to heuristic filtering
+        important_indices = heuristic_important_elements(elements)
+        filtered_elements = []
+        for idx in important_indices:
+            if 0 <= idx < len(elements):
+                filtered_elements.append(elements[idx])
+        return filtered_elements
+
+
+def heuristic_important_elements(elements: List[DOMElement], lower_threshold: bool = False) -> List[int]:
+    """
+    Fallback heuristic method to identify important elements
+    Returns indices of important elements
+    """
+    scored_elements = []
+
+    # Priority scoring system
+    for i, element in enumerate(elements):
+        score = 0
+        tag = element.tag_name.lower()
+        text = (element.text_content or "").lower().strip()
+        attrs = element.attributes or {}
+        class_name = attrs.get("class", "").lower()
+        element_id = attrs.get("id", "").lower()
+
+        # High priority elements
+        if tag in ["button", "input", "select", "textarea"]:
+            score += 10
+
+        if tag == "a" and attrs.get("href"):
+            score += 8
+
+        # Important action keywords in text
+        important_keywords = [
+            "login", "sign in", "register", "signup", "submit", "search",
+            "menu", "home", "contact", "about", "buy", "purchase", "cart",
+            "checkout", "save", "continue", "next", "back", "cancel",
+            # Video/media keywords
+            "play", "pause", "watch", "video", "subscribe", "like", "share",
+            "comment", "playlist", "channel", "live", "stream"
+        ]
+
+        if text and any(keyword in text for keyword in important_keywords):
+            score += 15
+
+        # Important class/ID patterns
+        important_patterns = [
+            "nav", "menu", "button", "btn", "primary", "main", "header",
+            "search", "login", "auth", "submit", "cta", "call-to-action",
+            # YouTube/video specific patterns
+            "video", "thumbnail", "play", "player", "content", "item",
+            "card", "tile", "entry", "link", "clickable", "watch",
+            "ytd-", "yt-", "video-title", "media", "playlist"
+        ]
+
+        if any(pattern in class_name or pattern in element_id for pattern in important_patterns):
+            score += 5
+
+        # Special scoring for video/media platforms
+        if "youtube.com" in attrs.get("href", "") or "youtu.be" in attrs.get("href", ""):
+            score += 12
+
+        # YouTube-specific element detection
+        youtube_patterns = [
+            "ytd-video-renderer", "ytd-rich-item", "ytd-compact-video",
+            "ytd-playlist-renderer", "ytd-channel-renderer", "video-title",
+            "thumbnail", "ytd-thumbnail", "yt-simple-endpoint"
+        ]
+
+        if any(pattern in class_name or pattern in element_id for pattern in youtube_patterns):
+            score += 10
+            logger.info(f"DEBUG: YouTube element found - {element.tag_name} class='{class_name}' score={score}")
+
+        # Content elements that are likely clickable (div, span, etc. with clickable indicators)
+        if tag in ["div", "span", "section", "article"] and (
+            "click" in class_name or
+            "link" in class_name or
+            "item" in class_name or
+            "card" in class_name or
+            "tile" in class_name or
+            "entry" in class_name or
+            "content" in class_name
+        ):
+            score += 6
+
+        # Form inputs get higher priority
+        if tag == "input":
+            input_type = attrs.get("type", "").lower()
+            if input_type in ["text", "email", "password", "search"]:
+                score += 12
+            elif input_type in ["submit", "button"]:
+                score += 15
+
+        # Penalize elements that seem decorative or secondary
+        decorative_patterns = ["icon", "decoration", "ad", "banner", "footer"]
+        if any(pattern in class_name for pattern in decorative_patterns):
+            score -= 5
+
+        threshold = 3 if lower_threshold else 5  # Even lower threshold for bypass mode
+        if score >= threshold:
+            scored_elements.append((i, score))
+
+    # Sort by score (descending) and return indices
+    scored_elements.sort(key=lambda x: x[1], reverse=True)
+    limit = 100 if lower_threshold else 25  # Even more elements when bypassing AI
+    return [i for i, score in scored_elements[:limit]]
+
 async def handle_show_numbers(request: CommandRequest) -> ShowNumbersResponse:
     """
     Handle "show numbers" command - identify interactive elements for numbering
+    AI-enhanced to only label elements that seem important
     """
     try:
-        # Filter DOM elements to find interactive ones
+        # Step 1: Filter DOM elements to find interactive ones
         interactive_elements = []
-        element_counter = 1
-        
+
         for element in request.page_context.elements:
             if is_interactive_element(element):
-                numbered_element = {
-                    "number": element_counter,
-                    "element": element.dict(),
-                    "description": generate_element_description(element)
-                }
-                interactive_elements.append(numbered_element)
-                element_counter += 1
-        
+                interactive_elements.append(element)
+
         logger.info(f"Found {len(interactive_elements)} interactive elements")
-        
+
+        # Step 2: Use AI to filter for important elements only
+        # Check if user wants to see all elements (bypass AI filtering)
+        user_query = request.query if hasattr(request, 'query') else None
+        bypass_ai = user_query and any(phrase in user_query.lower() for phrase in [
+            "show all", "all numbers", "every element", "everything", "more elements", "debug"
+        ])
+
+        # DEBUG MODE: Log element detection results
+        logger.info(f"DEBUG: Found {len(interactive_elements)} interactive elements before filtering")
+        if len(interactive_elements) < 5:
+            logger.info("DEBUG: Very few interactive elements found - checking first 10 elements:")
+            for i, element in enumerate(request.page_context.elements[:10]):
+                is_interactive = is_interactive_element(element)
+                attrs = element.attributes or {}
+                class_name = attrs.get('class', '')
+                text = (element.text_content or '')[:50]
+                logger.info(f"  Element {i}: {element.tag_name} class='{class_name}' text='{text}' interactive={is_interactive}")
+
+        # If very few interactive elements found, use more lenient detection
+        if len(interactive_elements) < 5:
+            logger.info("DEBUG: Using lenient detection due to low interactive element count")
+            bypass_ai = True
+
+        # Use lenient detection for better coverage
+        bypass_ai = True  # Always use heuristic scoring for more reliable results
+
+        if bypass_ai:
+            # Use heuristic scoring but with lower threshold to show more elements
+            important_indices = heuristic_important_elements(interactive_elements, lower_threshold=True)
+            important_elements = []
+            for idx in important_indices:
+                if 0 <= idx < len(interactive_elements):
+                    important_elements.append(interactive_elements[idx])
+            logger.info(f"Bypassed AI filtering, showing {len(important_elements)} elements")
+        else:
+            important_elements = await filter_important_elements(
+                interactive_elements,
+                request.page_context.url,
+                user_query
+            )
+
+        logger.info(f"AI filtered to {len(important_elements)} important elements")
+
+        # DEBUG: Log what types of elements we're about to number
+        element_types = {}
+        for elem in important_elements:
+            tag_class = f"{elem.tag_name}.{elem.attributes.get('class', '')[:50] if elem.attributes else ''}"
+            element_types[tag_class] = element_types.get(tag_class, 0) + 1
+        logger.info(f"DEBUG: Element types to number: {element_types}")
+
+        # Step 3: Number the important elements
+        numbered_elements = []
+        element_counter = 1
+
+        for element in important_elements:
+            numbered_element = {
+                "number": element_counter,
+                "element": element.dict(),
+                "description": generate_element_description(element)
+            }
+            numbered_elements.append(numbered_element)
+            element_counter += 1
+
         return ShowNumbersResponse(
             command_type="show_numbers",
-            numbered_elements=interactive_elements,
-            total_elements=len(interactive_elements),
-            instructions="Interactive elements have been numbered. Say 'click number X' or 'type [text] in number X' to interact."
+            numbered_elements=numbered_elements,
+            total_elements=len(numbered_elements),
+            instructions="Most important interactive elements have been numbered. Say 'click number X' or 'type [text] in number X' to interact."
         )
-        
+
     except Exception as e:
         logger.error(f"Error in handle_show_numbers: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to process show numbers: {str(e)}")
@@ -283,33 +547,246 @@ async def handle_number_command(request: CommandRequest) -> ActionSequenceRespon
 def is_interactive_element(element: DOMElement) -> bool:
     """
     Determine if a DOM element is interactive and should be numbered
+    Enhanced version with comprehensive detection logic
     """
-    interactive_tags = ['button', 'input', 'textarea', 'select', 'a']
-    interactive_roles = ['button', 'link', 'textbox', 'combobox', 'tab']
-    interactive_attributes = ['onclick', 'href', 'tabindex']
-    
-    # Check tag name
-    if element.tag_name.lower() in interactive_tags:
-        # Skip hidden inputs
-        if element.tag_name.lower() == 'input' and element.attributes.get('type') == 'hidden':
+    # More lenient visibility check - only skip if explicitly hidden
+    if hasattr(element, 'is_visible') and element.is_visible is False:
+        # Check if element might still be interactive despite being marked invisible
+        attributes = element.attributes or {}
+        # Allow elements that might be dynamically shown/hidden
+        if not any(attr in attributes for attr in ['style', 'class', 'hidden']):
+            return False
+
+    tag_name = element.tag_name.lower()
+    attributes = element.attributes or {}
+    class_name = attributes.get('class', '').lower()
+
+    # 1. Standard interactive HTML elements
+    interactive_tags = [
+        'button', 'input', 'textarea', 'select', 'a', 'summary',
+        'details', 'option', 'optgroup', 'label', 'form'
+    ]
+
+    if tag_name in interactive_tags:
+        # Skip hidden inputs and disabled elements
+        if tag_name == 'input':
+            input_type = attributes.get('type', '').lower()
+            if input_type == 'hidden' or attributes.get('disabled'):
+                return False
+        # Skip disabled elements
+        if attributes.get('disabled') or attributes.get('aria-disabled') == 'true':
             return False
         return True
-    
-    # Check role attribute
-    if element.attributes.get('role') in interactive_roles:
+
+    # 2. Elements with interactive ARIA roles
+    interactive_roles = [
+        'button', 'link', 'textbox', 'combobox', 'tab', 'menuitem',
+        'menuitemcheckbox', 'menuitemradio', 'option', 'checkbox',
+        'radio', 'slider', 'spinbutton', 'switch', 'tabpanel',
+        'treeitem', 'gridcell', 'columnheader', 'rowheader'
+    ]
+
+    role = attributes.get('role', '').lower()
+    if role in interactive_roles:
+        if attributes.get('disabled') or attributes.get('aria-disabled') == 'true':
+            return False
         return True
-    
-    # Check for interactive attributes
+
+    # 3. Elements with interactive attributes (including modern framework handlers)
+    interactive_attributes = [
+        'onclick', 'onmousedown', 'onmouseup', 'href', 'tabindex',
+        'contenteditable', 'draggable',
+        # React event handlers
+        'onClick', 'onSubmit', 'onChange', 'onFocus', 'onBlur', 'onKeyDown',
+        'onKeyUp', 'onKeyPress', 'onDoubleClick', 'onContextMenu',
+        # Vue.js event handlers
+        '@click', '@submit', '@change', '@focus', '@blur', '@keydown',
+        '@keyup', '@dblclick', '@contextmenu', 'v-on:click', 'v-on:submit',
+        # Angular event handlers
+        '(click)', '(submit)', '(change)', '(focus)', '(blur)', '(keydown)',
+        # Other framework patterns
+        'ng-click', 'ng-submit', 'data-ng-click', 'x-on:click', 'wire:click'
+    ]
+
     for attr in interactive_attributes:
-        if attr in element.attributes:
+        if attr in attributes:
+            # Allow elements with tabindex="-1" (programmatically focusable)
+            if attr == 'tabindex':
+                try:
+                    tabindex_val = int(str(attributes.get('tabindex', '0')))
+                    # Only skip if tabindex is very negative (likely intentionally hidden)
+                    if tabindex_val < -1:
+                        continue
+                except (ValueError, TypeError):
+                    pass
+            # Skip non-editable contenteditable
+            if attr == 'contenteditable' and attributes.get('contenteditable') == 'false':
+                continue
             return True
-    
-    # Check for common interactive classes
-    class_name = element.attributes.get('class', '').lower()
-    interactive_classes = ['btn', 'button', 'link', 'clickable', 'interactive']
-    if any(cls in class_name for cls in interactive_classes):
+
+    # 4. Framework-specific interactive classes
+    interactive_class_patterns = [
+        # Generic patterns
+        'btn', 'button', 'link', 'clickable', 'interactive', 'action',
+        # Bootstrap
+        'btn-', 'nav-link', 'dropdown-toggle', 'close', 'pagination',
+        'list-group-item', 'card-', 'alert', 'badge',
+        # Material UI
+        'mui', 'mat-button', 'mat-icon-button', 'mat-fab', 'mat-mini-fab',
+        'mat-chip', 'mat-tab', 'mat-menu-item',
+        # Tailwind
+        'cursor-pointer', 'hover:', 'focus:', 'active:',
+        # Ant Design
+        'ant-btn', 'ant-menu-item', 'ant-tabs-tab', 'ant-select',
+        # React/Vue component patterns
+        'react-', 'vue-', 'component-',
+        # Common patterns
+        'click', 'press', 'tap', 'select', 'toggle', 'switch', 'menu',
+        'tab', 'accordion', 'dropdown', 'modal', 'popup', 'tooltip',
+        # Framework agnostic
+        'control', 'widget', 'trigger', 'handle', 'item', 'option',
+        # Modern CSS frameworks
+        'chakra-', 'mantine-', 'semantic-',
+        # Icon libraries that are often clickable
+        'fa-', 'icon-', 'feather-', 'lucide-'
+    ]
+
+    for pattern in interactive_class_patterns:
+        if pattern in class_name:
+            return True
+
+    # 4.5. YouTube and video platform specific detection
+    youtube_class_patterns = [
+        'ytd-video-renderer', 'ytd-rich-item', 'ytd-compact-video',
+        'ytd-playlist-renderer', 'ytd-channel-renderer', 'ytd-thumbnail',
+        'yt-simple-endpoint', 'video-title', 'ytd-rich-grid-media',
+        'ytd-rich-item-renderer', 'ytd-video-meta-block', 'ytd-compact-radio-renderer',
+        'ytd-compact-playlist-renderer', 'ytd-grid-video-renderer',
+        # Other video platforms
+        'video-item', 'video-card', 'video-thumbnail', 'media-item',
+        'content-tile', 'watch-card', 'video-link', 'playlist-item'
+    ]
+
+    # Check for YouTube/video platform specific classes
+    for pattern in youtube_class_patterns:
+        if pattern in class_name:
+            return True
+
+    # Check for video-related data attributes
+    video_data_attrs = [
+        'data-video-id', 'data-context-item-id', 'data-sessionlink',
+        'data-ytid', 'data-vid', 'data-video-url'
+    ]
+
+    for attr in video_data_attrs:
+        if attr in attributes:
+            return True
+
+    # 5. Custom elements and web components (often interactive)
+    if '-' in tag_name and tag_name not in ['input', 'select', 'textarea']:
+        # Common interactive custom element patterns
+        interactive_custom_patterns = [
+            'button', 'btn', 'icon', 'fab', 'chip', 'tab', 'menu',
+            'toggle', 'switch', 'slider', 'card', 'tile', 'item',
+            'option', 'picker', 'selector', 'trigger', 'action'
+        ]
+        for pattern in interactive_custom_patterns:
+            if pattern in tag_name:
+                return True
+        # Assume most custom elements are interactive unless proven otherwise
         return True
-    
+
+    # 6. Elements with cursor pointer style (if available)
+    style = attributes.get('style', '').lower()
+    if 'cursor:pointer' in style.replace(' ', '') or 'cursor: pointer' in style:
+        return True
+
+    # 7. Data attributes suggesting interactivity
+    interactive_data_attrs = [
+        'data-toggle', 'data-dismiss', 'data-target', 'data-action',
+        'data-click', 'data-href', 'data-url', 'data-link', 'data-command'
+    ]
+
+    for attr in interactive_data_attrs:
+        if attr in attributes:
+            return True
+
+    # 8. Elements that commonly receive click handlers via JS
+    # (expanded to catch more interactive containers)
+    potentially_interactive_tags = ['div', 'span', 'img', 'i', 'svg', 'path',
+                                   'section', 'article', 'header', 'footer',
+                                   'nav', 'aside', 'main', 'figure', 'li',
+                                   'tr', 'td', 'th', 'p', 'h1', 'h2', 'h3',
+                                   'h4', 'h5', 'h6']
+
+    if tag_name in potentially_interactive_tags:
+        # AGGRESSIVE YOUTUBE DETECTION: If this looks like a YouTube video element, include it
+        page_is_youtube = "youtube.com" in str(attributes.get("href", "")).lower() if attributes else False
+        if (any(yt_class in class_name for yt_class in ["ytd-", "yt-"]) or
+            any(video_word in class_name for video_word in ["video", "thumbnail", "watch"]) or
+            any(attr_name in attributes for attr_name in ["data-video-id", "data-context-item-id"]) if attributes else False or
+            page_is_youtube):
+            return True
+        # Check for common interactive indicators
+        text_content = (element.text_content or '').lower().strip()
+        interactive_text_patterns = [
+            'click', 'tap', 'press', 'select', 'choose', 'submit',
+            'cancel', 'close', 'open', 'show', 'hide', 'toggle',
+            'next', 'previous', 'back', 'forward', 'more', 'less',
+            'login', 'signup', 'register', 'subscribe', 'download',
+            'play', 'pause', 'stop', 'edit', 'delete', 'remove',
+            'add', 'create', 'new', 'save', 'update', 'refresh',
+            'search', 'filter', 'sort', 'view', 'expand', 'collapse'
+        ]
+
+        # If element has suggestive text content
+        if text_content and any(pattern in text_content for pattern in interactive_text_patterns):
+            return True
+
+        # If element has ID suggesting interactivity
+        element_id = attributes.get('id', '').lower()
+        if element_id and any(pattern in element_id for pattern in interactive_text_patterns):
+            return True
+
+        # Check if it's an icon element (often clickable)
+        if tag_name in ['i', 'svg'] or 'icon' in class_name:
+            return True
+
+        # Check if it looks like a card or tile (often clickable)
+        if any(pattern in class_name for pattern in ['card', 'tile', 'item', 'row']):
+            return True
+
+        # Special case for YouTube video content - if it has substantial text content
+        # and YouTube-style classes, it's likely a video title/thumbnail
+        if (text_content and len(text_content) > 10 and
+            any(yt_pattern in class_name for yt_pattern in [
+                'ytd-', 'yt-', 'video', 'watch', 'content', 'title', 'thumbnail'
+            ])):
+            return True
+
+    # 9. Elements with ARIA attributes suggesting interactivity
+    aria_interactive_attrs = [
+        'aria-expanded', 'aria-pressed', 'aria-selected', 'aria-checked',
+        'aria-haspopup', 'aria-controls'
+    ]
+
+    for attr in aria_interactive_attrs:
+        if attr in attributes:
+            return True
+
+    # 10. Form-related elements
+    form_attrs = ['form', 'formaction', 'formmethod', 'formtarget']
+    for attr in form_attrs:
+        if attr in attributes:
+            return True
+
+    # 11. FALLBACK: On YouTube pages, be much more aggressive
+    # Any element with meaningful text content gets a chance
+    if (element.text_content and len(element.text_content.strip()) > 5 and
+        any(pattern in (element.text_content or "").lower() for pattern in
+            ["video", "watch", "play", "subscribe", "channel", "playlist", "view", "ago", "minutes", "hours", "days", "weeks", "months", "years"])):
+        return True
+
     return False
 
 def generate_element_description(element: DOMElement) -> str:

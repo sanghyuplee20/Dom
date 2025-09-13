@@ -515,7 +515,7 @@ Return ONLY the JSON array:
             # Quick validation
             if not command or not command.strip():
                 return {"valid": False, "error": "Empty command"}
-            
+
             # Check for common patterns
             command_lower = command.lower()
             if any(word in command_lower for word in ["click", "type", "scroll", "search", "fill"]):
@@ -537,6 +537,47 @@ Return ONLY the JSON array:
                     "confidence": 0.6,
                     "suggestion": "Try using specific action words like 'click', 'type', or 'scroll'"
                 }
-        
+
         except Exception as e:
             return {"valid": False, "error": str(e)}
+
+    async def analyze_element_importance(self, prompt: str) -> List[int]:
+        """Analyze elements and return indices of important ones"""
+        try:
+            if not self.is_available():
+                logger.warning("Gemini not available for element importance analysis")
+                return []
+
+            # Create a simple prompt template for element analysis
+            analysis_prompt = ChatPromptTemplate.from_template("""
+{prompt}
+
+You must respond with ONLY a JSON array of numbers representing the indices of important elements.
+For example: [0, 2, 5, 8, 12]
+
+Do not include any other text, explanation, or markdown formatting.
+""")
+
+            # Get response from Gemini
+            response = await self.llm.ainvoke(analysis_prompt.format(prompt=prompt))
+
+            # Parse the response to extract indices
+            content = response.content.strip()
+
+            # Try to extract JSON array from response
+            import re
+            json_match = re.search(r'\[[\d,\s]*\]', content)
+            if json_match:
+                indices_json = json_match.group(0)
+                indices = json.loads(indices_json)
+
+                # Validate that we got a list of integers
+                if isinstance(indices, list) and all(isinstance(i, int) for i in indices):
+                    return indices
+
+            logger.warning(f"Could not parse element importance response: {content}")
+            return []
+
+        except Exception as e:
+            logger.error(f"Element importance analysis failed: {e}")
+            return []
