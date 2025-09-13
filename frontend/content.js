@@ -289,6 +289,7 @@ class VoiceForwardContent {
         if (result.command_type === 'show_numbers') {
             this.showNumbers(result.numbered_elements);
         } else if (result.command_type === 'action_sequence') {
+            this.hideNumbers();
             await this.executeActions(result.actions);
         }
     }
@@ -332,9 +333,6 @@ class VoiceForwardContent {
         document.body.classList.add('vf-numbers-active');
         
         console.log('Numbers shown:', this.numberedElements);
-        
-        // Auto-hide after 30 seconds
-        setTimeout(() => this.hideNumbers(), 30000);
     }
     
     findElementFromDescription(elementDesc) {
@@ -529,9 +527,6 @@ class VoiceForwardContent {
         document.body.classList.add('vf-numbers-active');
 
         console.log(`Successfully numbered ${elementsToNumber.length} elements`);
-
-        // Auto-hide after 30 seconds
-        setTimeout(() => this.hideNumbers(), 30000);
     }
     
     async executeActions(actions) {
