@@ -241,6 +241,11 @@ class VoiceForwardContent {
         
         this.isShowingNumbers = true;
         
+        // Add visual indicator to body
+        document.body.classList.add('vf-numbers-active');
+        
+        console.log('Numbers shown:', this.numberedElements);
+        
         // Auto-hide after 30 seconds
         setTimeout(() => this.hideNumbers(), 30000);
     }
@@ -306,6 +311,11 @@ class VoiceForwardContent {
         this.overlays = [];
         this.numberedElements.clear();
         this.isShowingNumbers = false;
+        
+        // Remove visual indicator from body
+        document.body.classList.remove('vf-numbers-active');
+        
+        console.log('Numbers hidden');
     }
     
     async executeActions(actions) {
@@ -331,6 +341,8 @@ class VoiceForwardContent {
     
     async executeAction(action) {
         console.log('Executing action:', action);
+        console.log('Numbers currently showing:', this.isShowingNumbers);
+        console.log('Available numbered elements:', Array.from(this.numberedElements.keys()));
         
         switch (action.action) {
             case 'click':
@@ -472,7 +484,14 @@ class VoiceForwardContent {
         // Strategy 3: Find by numbered element (if numbers are showing)
         if (action.target && action.target.startsWith('number_')) {
             const number = parseInt(action.target.split('_')[1]);
-            return this.numberedElements.get(number);
+            const element = this.numberedElements.get(number);
+            if (element) {
+                console.log(`Found numbered element ${number}:`, element);
+                return element;
+            } else {
+                console.warn(`Numbered element ${number} not found. Available numbers:`, Array.from(this.numberedElements.keys()));
+                console.warn('Full numbered elements map:', this.numberedElements);
+            }
         }
         
         // Strategy 4: Find by text content

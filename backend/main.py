@@ -97,11 +97,16 @@ async def process_command(request: CommandRequest):
         # Step 1: Parse and classify the command
         command_type = classify_command(request.query)
         
+        logger.info(f"Command classified as: {command_type}")
+        
         if command_type == "show_numbers":
             # Step 2a: Handle "show numbers" command
             return await handle_show_numbers(request)
+        elif command_type == "number_command":
+            # Step 2b: Handle number-based commands (click on 2, etc.)
+            return await handle_number_command(request)
         else:
-            # Step 2b: Handle action planning command
+            # Step 2c: Handle action planning command
             return await handle_action_planning(request)
             
     except Exception as e:
@@ -128,8 +133,17 @@ def classify_command(query: str) -> str:
             return "show_numbers"
     
     # Check for direct number commands (when numbers are already showing)
-    if "number" in query_lower and any(str(i) in query_lower for i in range(1, 21)):
-        return "number_command"
+    # More comprehensive number detection patterns
+    number_patterns = [
+        r'\b(click|type|press|select|choose|tap)\s+(on\s+)?(?:number\s+)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b',
+        r'\b(number\s+)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b',
+        r'\b(\d+)\b'
+    ]
+    
+    import re
+    for pattern in number_patterns:
+        if re.search(pattern, query_lower):
+            return "number_command"
     
     # Default to action planning
     return "action_planning"
@@ -165,6 +179,106 @@ async def handle_show_numbers(request: CommandRequest) -> ShowNumbersResponse:
     except Exception as e:
         logger.error(f"Error in handle_show_numbers: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to process show numbers: {str(e)}")
+
+async def handle_number_command(request: CommandRequest) -> ActionSequenceResponse:
+    """
+    Handle number-based commands like "click on 2" or "type hello in 3"
+    """
+    try:
+        import re
+        
+        query_lower = request.query.lower().strip()
+        logger.info(f"Processing number command: {query_lower}")
+        
+        # Extract numbers and actions from the command
+        actions = []
+        
+        # Pattern to match "click [on] [number] N" where N can be digit or word
+        click_pattern = r'\b(click|tap|press|select|choose)\s+(?:on\s+)?(?:number\s+)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b'
+        click_matches = re.findall(click_pattern, query_lower)
+        
+        # Pattern to match "type X [in] [number] N"
+        type_pattern = r'\b(type|enter|input)\s+([^,]+?)\s+(?:in|into|on)\s+(?:number\s+)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b'
+        type_matches = re.findall(type_pattern, query_lower)
+        
+        # Convert word numbers to digits
+        word_to_num = {
+            'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5',
+            'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10'
+        }
+        
+        # Process click actions
+        for action_verb, number_str in click_matches:
+            number = word_to_num.get(number_str, number_str)
+            actions.append({
+                "action": "click",
+                "target": f"number_{number}",
+                "selector": f"[data-number='{number}']",
+                "number_reference": int(number),
+                "confidence": 0.95
+            })
+        
+        # Process type actions  
+        for action_verb, text, number_str in type_matches:
+            number = word_to_num.get(number_str, number_str)
+            text = text.strip()
+            actions.append({
+                "action": "type",
+                "text": text,
+                "target": f"number_{number}",
+                "selector": f"[data-number='{number}']",
+                "number_reference": int(number),
+                "confidence": 0.95
+            })
+        
+        # If no specific patterns matched, try to extract any number for a generic click
+        if not actions:
+            number_match = re.search(r'\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b', query_lower)
+            if number_match:
+                number_str = number_match.group(1)
+                number = word_to_num.get(number_str, number_str)
+                actions.append({
+                    "action": "click",
+                    "target": f"number_{number}",
+                    "selector": f"[data-number='{number}']", 
+                    "number_reference": int(number),
+                    "confidence": 0.8
+                })
+        
+        if not actions:
+            raise ValueError("Could not extract number-based actions from command")
+        
+        # Convert to Action objects
+        enriched_actions = []
+        for i, action in enumerate(actions):
+            enriched_action = Action(
+                id=str(uuid.uuid4()),
+                action=action["action"],
+                target=action["target"],
+                text=action.get("text", ""),
+                selector=action["selector"],
+                coordinates=action.get("coordinates"),
+                wait_time=0.5,
+                sequence_order=i + 1,
+                confidence=action["confidence"]
+            )
+            enriched_actions.append(enriched_action)
+        
+        logger.info(f"Generated {len(enriched_actions)} number-based actions")
+        
+        return ActionSequenceResponse(
+            command_type="action_sequence",
+            original_command=request.query,
+            actions=enriched_actions,
+            total_actions=len(enriched_actions),
+            estimated_duration=sum(action.wait_time for action in enriched_actions),
+            confidence_score=sum(action.confidence for action in enriched_actions) / len(enriched_actions),
+            instructions="Executing actions on numbered elements"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in handle_number_command: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to process number command: {str(e)}")
 
 def is_interactive_element(element: DOMElement) -> bool:
     """
@@ -387,6 +501,13 @@ async def validate_command(request: CommandRequest):
                 "command_type": "show_numbers",
                 "confidence": 1.0,
                 "estimated_elements": len([e for e in request.page_context.elements if is_interactive_element(e)])
+            }
+        elif command_type == "number_command":
+            validation_result = {
+                "valid": True,
+                "command_type": "number_command",
+                "confidence": 0.95,
+                "message": "Number-based command detected"
             }
         else:
             # Quick validation using Gemini

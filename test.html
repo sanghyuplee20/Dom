@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Forward Number Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        button {
+            margin: 10px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        input, textarea {
+            margin: 10px;
+            padding: 10px;
+            font-size: 16px;
+            width: 200px;
+        }
+        .clicked {
+            background-color: #4CAF50 !important;
+            color: white !important;
+        }
+    </style>
+</head>
+<body>
+    <h1>Voice Forward Number Test</h1>
+    
+    <div class="test-section">
+        <h2>Clickable Elements</h2>
+        <button onclick="this.classList.add('clicked'); console.log('Button 1 clicked')">Submit Form</button>
+        <button onclick="this.classList.add('clicked'); console.log('Button 2 clicked')">Cancel</button>
+        <button onclick="this.classList.add('clicked'); console.log('Button 3 clicked')">Save Draft</button>
+        <button onclick="this.classList.add('clicked'); console.log('Button 4 clicked')">Delete</button>
+    </div>
+    
+    <div class="test-section">
+        <h2>Input Elements</h2>
+        <input type="text" placeholder="Name" id="name-input">
+        <input type="email" placeholder="Email" id="email-input">
+        <textarea placeholder="Message" rows="3" id="message-input"></textarea>
+        <input type="password" placeholder="Password" id="password-input">
+    </div>
+    
+    <div class="test-section">
+        <h2>Links</h2>
+        <a href="#home" onclick="this.style.color='green'; console.log('Home link clicked')">Home</a> |
+        <a href="#about" onclick="this.style.color='green'; console.log('About link clicked')">About</a> |
+        <a href="#contact" onclick="this.style.color='green'; console.log('Contact link clicked')">Contact</a> |
+        <a href="#help" onclick="this.style.color='green'; console.log('Help link clicked')">Help</a>
+    </div>
+    
+    <div class="test-section">
+        <h2>Controls</h2>
+        <button onclick="testShowNumbers()">Show Numbers</button>
+        <button onclick="testClickNumber()">Test Click Number 2</button>
+        <button onclick="testTypeInNumber()">Test Type in Number 5</button>
+        <button onclick="hideNumbers()">Hide Numbers</button>
+    </div>
+    
+    <div id="debug-output" style="background: #f0f0f0; padding: 10px; margin-top: 20px; font-family: monospace; white-space: pre-wrap; max-height: 300px; overflow-y: auto;"></div>
+    
+    <script>
+        // Mock VoiceForwardContent for testing
+        let mockContent = null;
+        let debugOutput = document.getElementById('debug-output');
+        
+        function log(message) {
+            console.log(message);
+            debugOutput.textContent += new Date().toLocaleTimeString() + ': ' + message + '\n';
+            debugOutput.scrollTop = debugOutput.scrollHeight;
+        }
+        
+        // Initialize mock content when page loads
+        window.addEventListener('load', () => {
+            log('Initializing mock VoiceForward content...');
+            
+            // Create a simple mock of the content script
+            mockContent = {
+                numberedElements: new Map(),
+                overlays: [],
+                isShowingNumbers: false,
+                
+                analyzeDOM() {
+                    const elements = [];
+                    const interactiveSelectors = [
+                        'button:not([disabled])',
+                        'input:not([disabled]):not([type="hidden"])',
+                        'textarea:not([disabled])',
+                        'select:not([disabled])',
+                        'a[href]',
+                        '[role="button"]:not([disabled])',
+                        '[onclick]'
+                    ];
+                    
+                    const foundElements = document.querySelectorAll(interactiveSelectors.join(', '));
+                    foundElements.forEach((element, index) => {
+                        const rect = element.getBoundingClientRect();
+                        if (rect.width > 0 && rect.height > 0) {
+                            elements.push({
+                                tag_name: element.tagName.toLowerCase(),
+                                text_content: element.textContent?.trim() || element.placeholder || '',
+                                selector: element.id ? `#${element.id}` : element.tagName.toLowerCase(),
+                                position: { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
+                            });
+                        }
+                    });
+                    
+                    log(`Found ${elements.length} interactive elements`);
+                    return elements;
+                },
+                
+                showNumbers(numberedElements) {
+                    log(`Showing numbers for ${numberedElements.length} elements`);
+                    this.hideNumbers(); // Clear existing
+                    
+                    numberedElements.forEach(item => {
+                        const element = this.findElementFromDescription(item.element);
+                        if (element) {
+                            const overlay = this.createNumberOverlay(item.number, element);
+                            document.body.appendChild(overlay);
+                            this.overlays.push(overlay);
+                            this.numberedElements.set(item.number, element);
+                            log(`Numbered element ${item.number}: ${element.tagName} "${element.textContent?.trim() || element.placeholder || ''}"`);
+                        }
+                    });
+                    
+                    this.isShowingNumbers = true;
+                    document.body.classList.add('vf-numbers-active');
+                    log(`Numbers shown. Map size: ${this.numberedElements.size}`);
+                },
+                
+                findElementFromDescription(elementDesc) {
+                    if (elementDesc.selector && elementDesc.selector.startsWith('#')) {
+                        const element = document.querySelector(elementDesc.selector);
+                        if (element) return element;
+                    }
+                    
+                    const elements = document.querySelectorAll(elementDesc.tag_name);
+                    for (let element of elements) {
+                        const elementText = element.textContent?.trim() || element.placeholder || '';
+                        if (elementText === elementDesc.text_content) {
+                            return element;
+                        }
+                    }
+                    return null;
+                },
+                
+                createNumberOverlay(number, targetElement) {
+                    const rect = targetElement.getBoundingClientRect();
+                    const overlay = document.createElement('div');
+                    
+                    overlay.textContent = number.toString();
+                    const size = Math.min(Math.max(rect.width * 0.15, 20), 32);
+                    overlay.style.cssText = `
+                        position: fixed;
+                        top: ${rect.top - size/2}px;
+                        left: ${rect.right - size/2}px;
+                        width: ${size}px;
+                        height: ${size}px;
+                        background: linear-gradient(135deg, #ff4444, #cc2222);
+                        color: white;
+                        border-radius: 50%;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-weight: bold;
+                        font-size: ${size * 0.6}px;
+                        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+                        z-index: 999999;
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+                        border: 2px solid white;
+                        pointer-events: none;
+                    `;
+                    
+                    return overlay;
+                },
+                
+                hideNumbers() {
+                    this.overlays.forEach(overlay => overlay.remove());
+                    this.overlays = [];
+                    this.numberedElements.clear();
+                    this.isShowingNumbers = false;
+                    document.body.classList.remove('vf-numbers-active');
+                    log('Numbers hidden');
+                },
+                
+                findActionTarget(action) {
+                    if (action.target && action.target.startsWith('number_')) {
+                        const number = parseInt(action.target.split('_')[1]);
+                        const element = this.numberedElements.get(number);
+                        if (element) {
+                            log(`Found numbered element ${number}: ${element.tagName}`);
+                            return element;
+                        } else {
+                            log(`Numbered element ${number} not found. Available: ${Array.from(this.numberedElements.keys())}`);
+                        }
+                    }
+                    return null;
+                },
+                
+                executeAction(action) {
+                    log(`Executing action: ${action.action} on ${action.target}`);
+                    const element = this.findActionTarget(action);
+                    
+                    if (!element) {
+                        log(`Could not find target element for action: ${action.target}`);
+                        return;
+                    }
+                    
+                    if (action.action === 'click') {
+                        element.click();
+                        element.style.outline = '3px solid #00ff88';
+                        setTimeout(() => element.style.outline = '', 2000);
+                        log(`Clicked element: ${element.tagName}`);
+                    } else if (action.action === 'type' && action.text) {
+                        if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
+                            element.focus();
+                            element.value = action.text;
+                            element.style.background = '#e8f5e8';
+                            setTimeout(() => element.style.background = '', 2000);
+                            log(`Typed "${action.text}" into ${element.tagName}`);
+                        }
+                    }
+                }
+            };
+            
+            log('Mock VoiceForward content initialized');
+        });
+        
+        function testShowNumbers() {
+            log('=== TEST: Show Numbers ===');
+            const elements = mockContent.analyzeDOM();
+            const numberedElements = elements.map((element, index) => ({
+                number: index + 1,
+                element: element,
+                description: `${element.tag_name} "${element.text_content}"`
+            }));
+            
+            mockContent.showNumbers(numberedElements);
+        }
+        
+        function testClickNumber() {
+            log('=== TEST: Click Number 2 ===');
+            const action = {
+                action: 'click',
+                target: 'number_2'
+            };
+            mockContent.executeAction(action);
+        }
+        
+        function testTypeInNumber() {
+            log('=== TEST: Type in Number 5 ===');
+            const action = {
+                action: 'type',
+                target: 'number_5',
+                text: 'Hello World!'
+            };
+            mockContent.executeAction(action);
+        }
+        
+        function hideNumbers() {
+            log('=== TEST: Hide Numbers ===');
+            mockContent.hideNumbers();
+        }
+    </script>
+</body>
+</html>
