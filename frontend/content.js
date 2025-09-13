@@ -16,12 +16,17 @@ class VoiceForwardContent {
                 case 'getDOMContext':
                     sendResponse(this.getDOMContext());
                     break;
-                    
+
                 case 'executeResult':
                     this.executeResult(message.data);
                     sendResponse({ success: true });
                     break;
-                    
+
+                case 'showNumbersDirectly':
+                    this.showNumbersDirectly();
+                    sendResponse({ success: true });
+                    break;
+
                 default:
                     console.warn('Unknown message action:', message.action);
             }
@@ -54,19 +59,32 @@ class VoiceForwardContent {
     analyzeDOM() {
         const elements = [];
         
-        // Define selectors for interactive elements
+        // SIMPLIFIED APPROACH: Cast a wider net and let the backend filter
         const interactiveSelectors = [
-            'button:not([disabled])',
-            'input:not([disabled]):not([type="hidden"])',
-            'textarea:not([disabled])',
-            'select:not([disabled])',
-            'a[href]',
-            '[role="button"]:not([disabled])',
-            '[onclick]',
-            '[tabindex]:not([tabindex="-1"])',
-            '.btn',
-            '.button',
-            '[data-testid*="button"]'
+            // Standard interactive elements
+            'button', 'input', 'textarea', 'select', 'a',
+
+            // Role-based elements
+            '[role="button"]', '[role="link"]', '[role="tab"]', '[role="menuitem"]',
+
+            // Common interactive classes
+            '[class*="btn"]', '[class*="button"]', '[class*="link"]',
+            '[class*="clickable"]', '[class*="interactive"]',
+
+            // Content containers that might be clickable
+            '[class*="card"]', '[class*="tile"]', '[class*="item"]', '[class*="entry"]',
+
+            // Elements with click handlers
+            '[onclick]', '[onmousedown]', '[onmouseup]',
+
+            // Elements with tabindex (focusable)
+            '[tabindex]',
+
+            // Data attributes suggesting interactivity
+            '[data-click]', '[data-action]', '[data-href]', '[data-url]',
+
+            // Cursor pointer elements
+            '[style*="cursor"]'
         ];
         
         // Find all interactive elements
@@ -88,11 +106,12 @@ class VoiceForwardContent {
             );
             
             if (isVisible) {
+                const selector = this.generateSelector(element);
                 const elementData = {
                     tag_name: element.tagName.toLowerCase(),
                     text_content: this.getElementText(element),
                     attributes: this.getElementAttributes(element),
-                    selector: this.generateSelector(element),
+                    selector: selector,
                     xpath: this.generateXPath(element),
                     position: {
                         x: rect.left,
@@ -103,12 +122,26 @@ class VoiceForwardContent {
                     is_visible: true,
                     is_interactive: true
                 };
-                
+
+                // DEBUG: Log selector for video elements
+                if (selector.includes('lockup') || selector.includes('video')) {
+                    console.log(`DEBUG: Video element selector: ${selector}`);
+                }
+
                 elements.push(elementData);
             }
         });
         
         console.log(`Found ${elements.length} interactive elements`);
+
+        // DEBUG: Log first few elements if we found very few
+        if (elements.length < 10) {
+            console.log('DEBUG: Few elements found, logging details:');
+            elements.slice(0, 5).forEach((el, i) => {
+                console.log(`Element ${i}:`, el.tag_name, el.attributes.class, el.text_content?.substring(0, 50));
+            });
+        }
+
         return elements;
     }
     
@@ -144,7 +177,12 @@ class VoiceForwardContent {
         const attrs = {};
         
         // Get important attributes
-        const importantAttrs = ['id', 'class', 'name', 'type', 'placeholder', 'aria-label', 'role', 'data-testid'];
+        const importantAttrs = [
+            'id', 'class', 'name', 'type', 'placeholder', 'aria-label', 'role', 'data-testid',
+            // YouTube and video-specific attributes
+            'data-video-id', 'data-context-item-id', 'data-sessionlink', 'data-ytid',
+            'data-vid', 'data-video-url', 'href', 'title', 'itemprop'
+        ];
         
         importantAttrs.forEach(attr => {
             const value = element.getAttribute(attr);
@@ -157,30 +195,57 @@ class VoiceForwardContent {
     }
     
     generateSelector(element) {
-        // Generate a CSS selector for the element
-        let selector = element.tagName.toLowerCase();
-        
-        // Add ID if available
-        if (element.id) {
+        // Generate a more unique CSS selector
+        let parts = [];
+
+        // Start with tag name
+        parts.push(element.tagName.toLowerCase());
+
+        // Add ID if available (most specific)
+        if (element.id && element.id.trim()) {
             return `#${element.id}`;
         }
-        
-        // Add class if available
+
+        // Add unique data attributes first (highly specific)
+        if (element.getAttribute('data-video-id')) {
+            return `[data-video-id="${element.getAttribute('data-video-id')}"]`;
+        }
+        if (element.getAttribute('data-context-item-id')) {
+            return `[data-context-item-id="${element.getAttribute('data-context-item-id')}"]`;
+        }
+        if (element.getAttribute('name')) {
+            return `[name="${element.getAttribute('name')}"]`;
+        }
+
+        // Build a more specific selector with classes
         if (element.className && typeof element.className === 'string') {
-            const classes = element.className.split(' ').filter(c => c.trim());
+            const classes = element.className.split(' ')
+                .filter(c => c.trim() && !c.includes('style-scope'))
+                .slice(0, 3); // Take up to 3 classes
+
             if (classes.length > 0) {
-                selector += '.' + classes[0];
+                parts.push('.' + classes.join('.'));
             }
         }
-        
-        // Add attribute selectors for better specificity
-        if (element.getAttribute('name')) {
-            selector += `[name="${element.getAttribute('name')}"]`;
-        } else if (element.getAttribute('data-testid')) {
-            selector += `[data-testid="${element.getAttribute('data-testid')}"]`;
+
+        // Add parent context to make selector more unique
+        let parent = element.parentElement;
+        if (parent && parent.tagName !== 'BODY') {
+            let parentSelector = parent.tagName.toLowerCase();
+            if (parent.id) {
+                parentSelector = `#${parent.id}`;
+            } else if (parent.className) {
+                const parentClasses = parent.className.split(' ')
+                    .filter(c => c.trim() && !c.includes('style-scope'))
+                    .slice(0, 1);
+                if (parentClasses.length > 0) {
+                    parentSelector += '.' + parentClasses[0];
+                }
+            }
+            return `${parentSelector} > ${parts.join('')}`;
         }
-        
-        return selector;
+
+        return parts.join('');
     }
     
     generateXPath(element) {
@@ -226,19 +291,36 @@ class VoiceForwardContent {
     showNumbers(numberedElements) {
         // Clear any existing numbers
         this.hideNumbers();
-        
+
         console.log(`Showing numbers for ${numberedElements.length} elements`);
-        
+        console.log('DEBUG: First few numbered elements:', numberedElements.slice(0, 3));
+
+        let successfulOverlays = 0;
+        let failedMatches = 0;
+
         numberedElements.forEach(item => {
             const element = this.findElementFromDescription(item.element);
             if (element) {
-                const overlay = this.createNumberOverlay(item.number, element);
-                document.body.appendChild(overlay);
-                this.overlays.push(overlay);
-                this.numberedElements.set(item.number, element);
+                // Check if we already numbered this exact element
+                const alreadyNumbered = Array.from(this.numberedElements.values()).includes(element);
+                if (alreadyNumbered) {
+                    console.warn(`Element already numbered, skipping duplicate for number ${item.number}`);
+                    failedMatches++;
+                } else {
+                    const overlay = this.createNumberOverlay(item.number, element);
+                    document.body.appendChild(overlay);
+                    this.overlays.push(overlay);
+                    this.numberedElements.set(item.number, element);
+                    successfulOverlays++;
+                }
+            } else {
+                console.warn(`Failed to find element for number ${item.number}:`, item.element);
+                failedMatches++;
             }
         });
-        
+
+        console.log(`DEBUG: Successfully created ${successfulOverlays} overlays, failed to match ${failedMatches} elements`);
+
         this.isShowingNumbers = true;
         
         // Add visual indicator to body
@@ -251,58 +333,125 @@ class VoiceForwardContent {
     }
     
     findElementFromDescription(elementDesc) {
-        // Try to find element using selector first
+        // Strategy 1: Position-based matching (most reliable for similar elements)
+        if (elementDesc.position && elementDesc.position.x !== undefined) {
+            const centerX = elementDesc.position.x + (elementDesc.position.width / 2);
+            const centerY = elementDesc.position.y + (elementDesc.position.height / 2);
+
+            // DEBUG: Log position info for video elements
+            const isVideoElement = elementDesc.attributes?.class?.includes('lockup') ||
+                                 elementDesc.attributes?.class?.includes('video') ||
+                                 elementDesc.tag_name === 'yt-lockup-view-model';
+
+            if (isVideoElement) {
+                console.log(`DEBUG: Looking for ${elementDesc.tag_name} at position (${Math.round(centerX)}, ${Math.round(centerY)})`);
+            }
+
+            try {
+                const elements = document.elementsFromPoint(centerX, centerY);
+                if (elements && elements.length > 0) {
+                    if (isVideoElement) {
+                        console.log(`DEBUG: Found ${elements.length} elements at position:`, elements.slice(0, 3).map(e => e.tagName));
+                    }
+
+                    // Find the best matching element at this position
+                    for (let elem of elements) {
+                        if (elem.tagName && elem.tagName.toLowerCase() === elementDesc.tag_name) {
+                            // Additional check: verify it's roughly the same size
+                            const rect = elem.getBoundingClientRect();
+                            const sizeDiffX = Math.abs(rect.width - elementDesc.position.width);
+                            const sizeDiffY = Math.abs(rect.height - elementDesc.position.height);
+
+                            if (sizeDiffX < 100 && sizeDiffY < 100) { // More tolerance
+                                if (isVideoElement) {
+                                    console.log(`DEBUG: Matched by position - size diff: ${sizeDiffX}x${sizeDiffY}`);
+                                }
+                                return elem;
+                            }
+                        }
+                    }
+
+                    // If no exact match, try any visible element at this position
+                    for (let elem of elements) {
+                        const rect = elem.getBoundingClientRect();
+                        if (rect.width > 10 && rect.height > 10) {
+                            if (isVideoElement) {
+                                console.log(`DEBUG: Using fallback element at position: ${elem.tagName}`);
+                            }
+                            return elem;
+                        }
+                    }
+                }
+            } catch (e) {
+                // elementsFromPoint failed, continue with other strategies
+                console.warn('Position-based matching failed:', e);
+            }
+        }
+
+        // Strategy 2: Try exact selector match
         if (elementDesc.selector) {
             try {
                 const element = document.querySelector(elementDesc.selector);
                 if (element) return element;
             } catch (e) {
-                // Selector might be invalid
+                // Invalid selector, continue
             }
         }
-        
-        // Fallback to finding by text content and tag
-        const elements = document.querySelectorAll(elementDesc.tag_name);
-        for (let element of elements) {
-            if (this.getElementText(element) === elementDesc.text_content) {
-                return element;
+
+        // Strategy 3: Find by unique text content
+        if (elementDesc.text_content && elementDesc.text_content.length > 10) {
+            const candidates = document.querySelectorAll(elementDesc.tag_name);
+            for (let element of candidates) {
+                const elementText = this.getElementText(element);
+                if (elementText && elementText.includes(elementDesc.text_content.substring(0, 20))) {
+                    return element;
+                }
             }
         }
-        
+
         return null;
     }
     
     createNumberOverlay(number, targetElement) {
         const rect = targetElement.getBoundingClientRect();
         const overlay = document.createElement('div');
-        
+
         overlay.className = 'vf-number-overlay';
         overlay.textContent = number.toString();
-        
-        // Position overlay
-        const size = Math.min(Math.max(rect.width * 0.15, 20), 32);
+
+        // Better positioning logic
+        const size = 24; // Fixed size for consistency
+        let left = rect.left - size/2;
+        let top = rect.top - size/2;
+
+        // Ensure overlay stays within viewport
+        if (left < 0) left = 5;
+        if (top < 0) top = 5;
+        if (left + size > window.innerWidth) left = window.innerWidth - size - 5;
+        if (top + size > window.innerHeight) top = window.innerHeight - size - 5;
+
         overlay.style.cssText = `
             position: fixed;
-            top: ${rect.top - size/2}px;
-            left: ${rect.right - size/2}px;
+            top: ${top}px;
+            left: ${left}px;
             width: ${size}px;
             height: ${size}px;
-            background: linear-gradient(135deg, #ff4444, #cc2222);
+            background: #ff4444;
             color: white;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: bold;
-            font-size: ${size * 0.6}px;
+            font-size: 14px;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             z-index: 999999;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.4);
             border: 2px solid white;
             pointer-events: none;
-            animation: vfPulse 2s infinite;
+            transition: opacity 0.2s ease;
         `;
-        
+
         return overlay;
     }
     
@@ -316,6 +465,68 @@ class VoiceForwardContent {
         document.body.classList.remove('vf-numbers-active');
         
         console.log('Numbers hidden');
+    }
+
+    showNumbersDirectly() {
+        console.log('Direct numbering mode - finding elements on page');
+        this.hideNumbers();
+
+        // Find all potentially interactive elements directly
+        const allElements = document.querySelectorAll(`
+            a, button, input, textarea, select,
+            [role="button"], [role="link"], [role="tab"],
+            [onclick], [onmousedown], [tabindex],
+            [class*="btn"], [class*="button"], [class*="link"],
+            [class*="card"], [class*="tile"], [class*="item"], [class*="entry"],
+            [class*="video"], [class*="play"], [class*="watch"],
+            [data-action], [data-click], [data-href]
+        `);
+
+        console.log(`Found ${allElements.length} potential elements`);
+
+        const visibleElements = [];
+        allElements.forEach(element => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+
+            // Check if element is visible
+            if (rect.width > 5 && rect.height > 5 &&
+                rect.top < window.innerHeight && rect.bottom > 0 &&
+                rect.left < window.innerWidth && rect.right > 0 &&
+                style.visibility !== 'hidden' && style.display !== 'none' &&
+                style.opacity !== '0') {
+                visibleElements.push(element);
+            }
+        });
+
+        console.log(`${visibleElements.length} visible elements found`);
+
+        // Sort by position (top to bottom, left to right)
+        visibleElements.sort((a, b) => {
+            const rectA = a.getBoundingClientRect();
+            const rectB = b.getBoundingClientRect();
+            const yDiff = rectA.top - rectB.top;
+            return Math.abs(yDiff) < 20 ? rectA.left - rectB.left : yDiff;
+        });
+
+        // Number the first 50 elements
+        const elementsToNumber = visibleElements.slice(0, 50);
+
+        elementsToNumber.forEach((element, index) => {
+            const number = index + 1;
+            const overlay = this.createNumberOverlay(number, element);
+            document.body.appendChild(overlay);
+            this.overlays.push(overlay);
+            this.numberedElements.set(number, element);
+        });
+
+        this.isShowingNumbers = true;
+        document.body.classList.add('vf-numbers-active');
+
+        console.log(`Successfully numbered ${elementsToNumber.length} elements`);
+
+        // Auto-hide after 30 seconds
+        setTimeout(() => this.hideNumbers(), 30000);
     }
     
     async executeActions(actions) {
