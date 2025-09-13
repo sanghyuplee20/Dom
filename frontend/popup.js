@@ -10,6 +10,7 @@ class VoiceForwardPopup {
         this.setupEventListeners();
         this.setupMessageListener();
         this.checkBackendStatus();
+        this.syncWithBackgroundState();
     }
     
     initializeElements() {
@@ -127,7 +128,11 @@ class VoiceForwardPopup {
             
             // Display result in popup
             this.displayResult(command, result);
-            
+
+            // Clear the command input and transcription preview to prevent overlap
+            this.commandInput.value = '';
+            this.showTranscriptionPreview('');
+
         } catch (error) {
             console.error('Command processing error:', error);
             this.displayError(command, error.message);
@@ -224,7 +229,17 @@ class VoiceForwardPopup {
                     this.updateRecordingUI(false);
                     break;
                 case 'processCommand':
-                    this.processBackendCommand(message.data);
+                    // This is now handled directly by content script
+                    console.log('processCommand message received but handled by content script');
+                    break;
+                case 'recordingStopped':
+                    this.handleRecordingStopped(message.text);
+                    break;
+                case 'commandExecuted':
+                    this.displayResult(message.command, message.result);
+                    // Clear the command input and transcription preview
+                    this.commandInput.value = '';
+                    this.showTranscriptionPreview('');
                     break;
             }
         });
@@ -246,6 +261,12 @@ class VoiceForwardPopup {
                 await chrome.tabs.sendMessage(tab.id, { action: 'startVoiceRecording' });
                 this.isRecording = true;
                 this.updateRecordingUI(true);
+
+                // Update background state for persistence
+                chrome.runtime.sendMessage({
+                    type: 'setRecordingState',
+                    isRecording: true
+                });
             } else {
                 throw new Error('No active tab found');
             }
@@ -269,7 +290,13 @@ class VoiceForwardPopup {
 
             this.isRecording = false;
             this.updateRecordingUI(false);
-            this.showVoiceStatus('Processing...', 'processing');
+            this.showVoiceStatus('Recording stopped', 'ready');
+
+            // Update background state
+            chrome.runtime.sendMessage({
+                type: 'setRecordingState',
+                isRecording: false
+            });
         } catch (error) {
             console.error('Failed to stop recording:', error);
             this.isRecording = false;
@@ -331,6 +358,10 @@ class VoiceForwardPopup {
             // Display result in popup
             this.displayResult(data.query, result);
 
+            // Clear the command input and transcription preview to prevent overlap
+            this.commandInput.value = '';
+            this.showTranscriptionPreview('');
+
         } catch (error) {
             console.error('Backend processing error:', error);
             this.showVoiceError(`Failed to process command: ${error.message}`);
@@ -374,6 +405,35 @@ class VoiceForwardPopup {
 
     hideVoiceError() {
         this.voiceError.classList.add('hidden');
+    }
+
+    async syncWithBackgroundState() {
+        try {
+            const response = await chrome.runtime.sendMessage({ type: 'getRecordingState' });
+            if (response && response.isRecording) {
+                this.isRecording = true;
+                this.updateRecordingUI(true);
+                this.showVoiceStatus('Syncing with persistent recording...', 'processing');
+
+                // Actually start recording on current tab
+                const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+                if (tab && tab.id) {
+                    await chrome.tabs.sendMessage(tab.id, { action: 'startVoiceRecording' });
+                    this.showVoiceStatus('Recording active (persistent)', 'listening');
+                } else {
+                    this.showVoiceStatus('Recording active (waiting for page)', 'processing');
+                }
+            }
+        } catch (error) {
+            console.log('Could not sync with background state:', error);
+        }
+    }
+
+    handleRecordingStopped(message) {
+        this.isRecording = false;
+        this.updateRecordingUI(false);
+        this.showVoiceStatus(message || 'Recording stopped', 'ready');
+        this.showTranscriptionPreview('');
     }
 }
 

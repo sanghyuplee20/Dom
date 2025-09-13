@@ -2,6 +2,7 @@
 
 class VoiceForwardBackground {
     constructor() {
+        this.isRecordingActive = false;
         this.setupEventListeners();
         console.log('VoiceForward background script loaded');
     }
@@ -14,18 +15,74 @@ class VoiceForwardBackground {
         
         // Handle messages between popup and content scripts
         chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-            // Log messages for debugging
             console.log('Background received message:', message);
-            return false; // Allow other handlers to process
+
+            switch (message.type) {
+                case 'setRecordingState':
+                    this.isRecordingActive = message.isRecording;
+                    console.log('Recording state updated:', this.isRecordingActive);
+                    this.updateBadge();
+                    sendResponse({ success: true });
+                    break;
+
+                case 'getRecordingState':
+                    sendResponse({ isRecording: this.isRecordingActive });
+                    break;
+
+                case 'stopRecordingCommand':
+                    // Voice command to stop recording
+                    this.isRecordingActive = false;
+                    this.updateBadge();
+                    // Notify all tabs to stop recording
+                    this.notifyAllTabs({ type: 'stopRecordingFromVoice' });
+                    sendResponse({ success: true });
+                    break;
+
+                default:
+                    // Forward other messages (for popup <-> content script communication)
+                    return false; // Allow other handlers to process
+            }
+            return true; // Keep message channel open for async response
         });
         
-        // Handle tab updates (optional: could inject content script dynamically)
+        // Handle tab updates - restart recording on new pages if it was active
         chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-            if (changeInfo.status === 'complete' && tab.url) {
-                // Page loaded - content script should already be injected via manifest
-                console.log('Page loaded:', tab.url);
+            if (changeInfo.status === 'complete' && tab.url && this.isRecordingActive) {
+                // Page loaded and recording is active - restart recording
+                console.log('Page loaded, restarting recording:', tab.url);
+                setTimeout(() => {
+                    chrome.tabs.sendMessage(tabId, {
+                        action: 'restartVoiceRecording'
+                    }).catch(error => {
+                        console.log('Could not restart recording on new page:', error);
+                    });
+                }, 1000); // Wait 1 second for content script to load
             }
         });
+    }
+
+    async notifyAllTabs(message) {
+        try {
+            const tabs = await chrome.tabs.query({});
+            for (const tab of tabs) {
+                chrome.tabs.sendMessage(tab.id, message).catch(() => {
+                    // Ignore errors for tabs without content scripts
+                });
+            }
+        } catch (error) {
+            console.error('Error notifying tabs:', error);
+        }
+    }
+
+    updateBadge() {
+        if (this.isRecordingActive) {
+            chrome.action.setBadgeText({ text: '🔴' });
+            chrome.action.setBadgeBackgroundColor({ color: '#ff4444' });
+            chrome.action.setTitle({ title: 'VoiceForward - Recording Active' });
+        } else {
+            chrome.action.setBadgeText({ text: '' });
+            chrome.action.setTitle({ title: 'VoiceForward Test' });
+        }
     }
 }
 

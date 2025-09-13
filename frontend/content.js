@@ -7,9 +7,15 @@ class VoiceForwardContent {
         this.isShowingNumbers = false;
         this.recognition = null;
         this.isListening = false;
+        this.interimTimeout = null;
+        this.floatingIndicator = null;
+        this.isWaitingForWakeWord = true;
+        this.wakeWord = 'hey dom';
 
         this.setupMessageListener();
         this.initializeVoiceRecognition();
+        this.createFloatingIndicator();
+        this.checkInitialRecordingState();
         console.log('VoiceForward content script loaded');
     }
     
@@ -41,6 +47,16 @@ class VoiceForwardContent {
                     break;
 
                 case 'stopVoiceRecording':
+                    this.stopVoiceRecording();
+                    sendResponse({ success: true });
+                    break;
+
+                case 'restartVoiceRecording':
+                    this.restartVoiceRecording();
+                    sendResponse({ success: true });
+                    break;
+
+                case 'stopRecordingFromVoice':
                     this.stopVoiceRecording();
                     sendResponse({ success: true });
                     break;
@@ -785,6 +801,7 @@ class VoiceForwardContent {
         this.recognition.onstart = () => {
             console.log('Voice recognition started');
             this.isListening = true;
+            this.showFloatingIndicator(true); // true = recording active
             this.sendMessageToPopup({ type: 'voiceStatusChanged', status: 'listening' });
         };
 
@@ -801,22 +818,100 @@ class VoiceForwardContent {
                 }
             }
 
-            // Send interim results to popup for preview
-            if (interimTranscript) {
+            // Handle interim results with 2-second auto-execution
+            if (interimTranscript && interimTranscript.trim().length > 2) {
+                const fullCommand = (finalTranscript + interimTranscript).trim();
+
+                // Send interim results to popup for preview
                 this.sendMessageToPopup({
                     type: 'transcriptionUpdate',
-                    text: finalTranscript + interimTranscript
+                    text: fullCommand
                 });
+
+                // Clear existing timeout
+                if (this.interimTimeout) {
+                    clearTimeout(this.interimTimeout);
+                }
+
+                // Set 2-second timeout to auto-execute command
+                this.interimTimeout = setTimeout(() => {
+                    if (this.isListening && fullCommand.length > 3) {
+                        console.log('Auto-executing after 2 seconds of silence:', fullCommand);
+
+                        // Check for "stop recording" command
+                        if (this.isStopRecordingCommand(fullCommand)) {
+                            console.log('Stop recording command detected (timeout)');
+                            this.showFloatingIndicator(false);
+                            chrome.runtime.sendMessage({ type: 'stopRecordingCommand' });
+                            this.sendMessageToPopup({
+                                type: 'recordingStopped',
+                                text: 'Recording stopped by voice command'
+                            });
+                            return;
+                        }
+
+                        this.sendMessageToPopup({
+                            type: 'transcriptionComplete',
+                            text: fullCommand
+                        });
+                        this.processVoiceCommand(fullCommand);
+
+                        // Clear the interim timeout and restart recognition with clean state
+                        if (this.interimTimeout) {
+                            clearTimeout(this.interimTimeout);
+                            this.interimTimeout = null;
+                        }
+
+                        // Stop and restart recognition to ensure clean state for next command
+                        if (this.recognition && this.isListening) {
+                            setTimeout(() => {
+                                this.recognition.stop();
+                            }, 100);
+                        }
+                    }
+                }, 2000);
             }
 
-            // Process final results
+            // Process final results immediately (override timeout)
             if (finalTranscript.trim()) {
-                console.log('Final transcript:', finalTranscript);
+                if (this.interimTimeout) {
+                    clearTimeout(this.interimTimeout);
+                    this.interimTimeout = null;
+                }
+
+                const command = finalTranscript.trim();
+                console.log('Final transcript:', command);
+
+                // Check for "stop recording" command
+                if (this.isStopRecordingCommand(command)) {
+                    console.log('Stop recording command detected');
+                    this.showFloatingIndicator(false);
+                    chrome.runtime.sendMessage({ type: 'stopRecordingCommand' });
+                    this.sendMessageToPopup({
+                        type: 'recordingStopped',
+                        text: 'Recording stopped by voice command'
+                    });
+                    return;
+                }
+
                 this.sendMessageToPopup({
                     type: 'transcriptionComplete',
-                    text: finalTranscript.trim()
+                    text: command
                 });
-                this.processVoiceCommand(finalTranscript.trim());
+                this.processVoiceCommand(command);
+
+                // Clear any pending timeout and restart recognition for next command
+                if (this.interimTimeout) {
+                    clearTimeout(this.interimTimeout);
+                    this.interimTimeout = null;
+                }
+
+                // Stop and restart recognition to ensure clean state for next command
+                if (this.recognition && this.isListening) {
+                    setTimeout(() => {
+                        this.recognition.stop();
+                    }, 100);
+                }
             }
         };
 
@@ -848,7 +943,27 @@ class VoiceForwardContent {
         this.recognition.onend = () => {
             console.log('Voice recognition ended');
             this.isListening = false;
+            this.showFloatingIndicator(false); // false = ready but not recording
+
+            // Clear any pending timeout
+            if (this.interimTimeout) {
+                clearTimeout(this.interimTimeout);
+                this.interimTimeout = null;
+            }
+
             this.sendMessageToPopup({ type: 'voiceStatusChanged', status: 'ready' });
+
+            // Auto-restart recognition for continuous listening (but with clean state)
+            setTimeout(() => {
+                if (!this.isListening && this.recognition) {
+                    try {
+                        console.log('Auto-restarting voice recognition with clean state...');
+                        this.recognition.start();
+                    } catch (error) {
+                        console.log('Could not auto-restart recognition:', error);
+                    }
+                }
+            }, 100); // Short delay to ensure clean restart
         };
     }
 
@@ -870,7 +985,14 @@ class VoiceForwardContent {
     stopVoiceRecording() {
         if (!this.isListening || !this.recognition) return;
 
+        // Clear any pending timeout
+        if (this.interimTimeout) {
+            clearTimeout(this.interimTimeout);
+            this.interimTimeout = null;
+        }
+
         this.recognition.stop();
+        this.showFloatingIndicator(false);
         console.log('Stopping voice recognition...');
     }
 
@@ -887,10 +1009,30 @@ class VoiceForwardContent {
                 page_context: domContext
             };
 
-            // Send to backend via popup
+            // Send directly to backend (no need for popup)
+            const response = await fetch('http://localhost:8000/process-command', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(requestData)
+            });
+
+            if (!response.ok) {
+                throw new Error(`Backend error: ${response.status}`);
+            }
+
+            const result = await response.json();
+            console.log('Backend response:', result);
+
+            // Execute the result directly
+            await this.executeResult(result);
+
+            // Also send to popup if it's open for display
             this.sendMessageToPopup({
-                type: 'processCommand',
-                data: requestData
+                type: 'commandExecuted',
+                command: command,
+                result: result
             });
 
         } catch (error) {
@@ -907,6 +1049,202 @@ class VoiceForwardContent {
         chrome.runtime.sendMessage(message).catch(error => {
             console.log('Could not send message to popup:', error);
         });
+    }
+
+    isStopRecordingCommand(command) {
+        const lowerCommand = command.toLowerCase().trim();
+        const stopPatterns = [
+            'stop recording',
+            'stop record',
+            'end recording',
+            'finish recording',
+            'quit recording',
+            'close recording',
+            'turn off recording',
+            'disable recording'
+        ];
+
+        return stopPatterns.some(pattern => lowerCommand.includes(pattern));
+    }
+
+    async restartVoiceRecording() {
+        console.log('Restarting voice recording on new page...');
+
+        // Wait a moment for the page to fully load
+        setTimeout(() => {
+            if (!this.isListening && this.recognition) {
+                try {
+                    this.recognition.start();
+                    console.log('Voice recording restarted successfully');
+                } catch (error) {
+                    console.error('Failed to restart voice recording:', error);
+                    // Try again in 2 seconds
+                    setTimeout(() => {
+                        this.restartVoiceRecording();
+                    }, 2000);
+                }
+            }
+        }, 500);
+    }
+
+    createFloatingIndicator() {
+        // Create floating recording indicator
+        this.floatingIndicator = document.createElement('div');
+        this.floatingIndicator.className = 'vf-floating-indicator';
+        this.floatingIndicator.innerHTML = `
+            <div class="vf-indicator-dot"></div>
+            <div class="vf-indicator-text">REC</div>
+        `;
+
+        // Add CSS styles
+        this.floatingIndicator.style.cssText = `
+            position: fixed !important;
+            top: 20px !important;
+            right: 20px !important;
+            width: 80px !important;
+            height: 35px !important;
+            background: rgba(229, 62, 62, 0.95) !important;
+            color: white !important;
+            border-radius: 20px !important;
+            display: none !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 8px !important;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+            font-size: 12px !important;
+            font-weight: bold !important;
+            z-index: 999999 !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
+            backdrop-filter: blur(10px) !important;
+            border: 2px solid rgba(255,255,255,0.3) !important;
+            cursor: pointer !important;
+            transition: all 0.3s ease !important;
+            user-select: none !important;
+        `;
+
+        // Style the dot
+        const dot = this.floatingIndicator.querySelector('.vf-indicator-dot');
+        if (dot) {
+            dot.style.cssText = `
+                width: 8px !important;
+                height: 8px !important;
+                background: white !important;
+                border-radius: 50% !important;
+                animation: vf-pulse 1s infinite !important;
+            `;
+        }
+
+        // Add pulsing animation
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes vf-pulse {
+                0% { opacity: 1; transform: scale(1); }
+                50% { opacity: 0.6; transform: scale(1.2); }
+                100% { opacity: 1; transform: scale(1); }
+            }
+            .vf-floating-indicator:hover {
+                transform: scale(1.05) !important;
+                background: rgba(229, 62, 62, 1) !important;
+            }
+        `;
+        document.head.appendChild(style);
+
+        // Add click handler to show status
+        this.floatingIndicator.addEventListener('click', () => {
+            this.showRecordingStatus();
+        });
+
+        // Add to page (initially hidden)
+        document.body.appendChild(this.floatingIndicator);
+    }
+
+    showFloatingIndicator(recording = false) {
+        if (!this.floatingIndicator) {
+            this.createFloatingIndicator();
+        }
+
+        if (this.floatingIndicator) {
+            this.floatingIndicator.style.display = 'flex';
+
+            if (recording) {
+                // Active recording state - red with pulsing
+                this.floatingIndicator.style.background = 'rgba(229, 62, 62, 0.95)';
+                const textElement = this.floatingIndicator.querySelector('.vf-indicator-text');
+                const dotElement = this.floatingIndicator.querySelector('.vf-indicator-dot');
+
+                if (textElement) textElement.textContent = 'REC';
+                if (dotElement) dotElement.style.animation = 'vf-pulse 1s infinite';
+            } else {
+                // Ready but not recording state - blue without pulsing
+                this.floatingIndicator.style.background = 'rgba(102, 126, 234, 0.9)';
+                const textElement = this.floatingIndicator.querySelector('.vf-indicator-text');
+                const dotElement = this.floatingIndicator.querySelector('.vf-indicator-dot');
+
+                if (textElement) textElement.textContent = 'READY';
+                if (dotElement) dotElement.style.animation = 'none';
+            }
+        }
+    }
+
+    hideFloatingIndicator() {
+        if (this.floatingIndicator) {
+            this.floatingIndicator.style.display = 'none';
+        }
+    }
+
+    showRecordingStatus() {
+        // Create temporary status popup
+        const statusPopup = document.createElement('div');
+        statusPopup.style.cssText = `
+            position: fixed !important;
+            top: 70px !important;
+            right: 20px !important;
+            padding: 12px 16px !important;
+            background: rgba(45, 55, 72, 0.95) !important;
+            color: white !important;
+            border-radius: 8px !important;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+            font-size: 12px !important;
+            z-index: 999999 !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
+            backdrop-filter: blur(10px) !important;
+            border: 1px solid rgba(255,255,255,0.2) !important;
+            max-width: 200px !important;
+        `;
+        statusPopup.innerHTML = `
+            <div style="font-weight: bold; margin-bottom: 4px;">VoiceForward Recording Active</div>
+            <div style="font-size: 11px; opacity: 0.8;">Say "stop recording" to end</div>
+        `;
+
+        document.body.appendChild(statusPopup);
+
+        // Remove after 3 seconds
+        setTimeout(() => {
+            if (statusPopup.parentNode) {
+                statusPopup.remove();
+            }
+        }, 3000);
+    }
+
+    async checkInitialRecordingState() {
+        // Always show the indicator immediately when page loads
+        this.showFloatingIndicator(false);
+
+        try {
+            // Check if recording should be active from background state
+            const response = await chrome.runtime.sendMessage({ type: 'getRecordingState' });
+            if (response && response.isRecording) {
+                console.log('Initial check: Recording should be active, starting...');
+                this.showFloatingIndicator(true);
+                // Start recording automatically
+                setTimeout(() => {
+                    this.startVoiceRecording();
+                }, 500);
+            }
+        } catch (error) {
+            console.log('Could not check initial recording state:', error);
+            // Keep indicator showing even if background check fails
+        }
     }
 }
 
