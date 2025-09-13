@@ -4,9 +4,11 @@ class VoiceForwardPopup {
     constructor() {
         this.backendUrl = 'http://localhost:8000';
         this.isProcessing = false;
-        
+        this.isRecording = false;
+
         this.initializeElements();
         this.setupEventListeners();
+        this.setupMessageListener();
         this.checkBackendStatus();
     }
     
@@ -18,6 +20,15 @@ class VoiceForwardPopup {
         this.resultsEl = document.getElementById('results');
         this.resultsContent = document.getElementById('resultsContent');
         this.loadingEl = document.getElementById('loading');
+
+        // Voice elements
+        this.recordBtn = document.getElementById('recordBtn');
+        this.stopBtn = document.getElementById('stopBtn');
+        this.voiceStatus = document.getElementById('voiceStatus');
+        this.voiceIndicator = document.getElementById('voiceIndicator');
+        this.voiceStatusText = document.getElementById('voiceStatusText');
+        this.transcriptionPreview = document.getElementById('transcriptionPreview');
+        this.voiceError = document.getElementById('voiceError');
     }
     
     setupEventListeners() {
@@ -34,6 +45,10 @@ class VoiceForwardPopup {
         // Clear results button
         this.clearButton.addEventListener('click', () => this.clearResults());
         
+        // Voice command buttons
+        this.recordBtn.addEventListener('click', () => this.startRecording());
+        this.stopBtn.addEventListener('click', () => this.stopRecording());
+
         // Quick command buttons
         document.querySelectorAll('.quick-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -189,6 +204,176 @@ class VoiceForwardPopup {
     clearResults() {
         this.resultsContent.innerHTML = '';
         this.showResults(false);
+    }
+
+    setupMessageListener() {
+        chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+            switch (message.type) {
+                case 'voiceStatusChanged':
+                    this.handleVoiceStatusChanged(message.status);
+                    break;
+                case 'transcriptionUpdate':
+                    this.showTranscriptionPreview(message.text);
+                    break;
+                case 'transcriptionComplete':
+                    this.handleTranscriptionComplete(message.text);
+                    break;
+                case 'voiceError':
+                    this.showVoiceError(message.error);
+                    this.isRecording = false;
+                    this.updateRecordingUI(false);
+                    break;
+                case 'processCommand':
+                    this.processBackendCommand(message.data);
+                    break;
+            }
+        });
+
+        // Show ready status initially
+        this.showVoiceStatus('Click "Start Recording" to begin voice input', 'ready');
+    }
+
+    async startRecording() {
+        if (this.isRecording) return;
+
+        try {
+            this.hideVoiceError();
+            this.showVoiceStatus('Starting recording...', 'processing');
+
+            // Get current tab and send message to content script
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (tab && tab.id) {
+                await chrome.tabs.sendMessage(tab.id, { action: 'startVoiceRecording' });
+                this.isRecording = true;
+                this.updateRecordingUI(true);
+            } else {
+                throw new Error('No active tab found');
+            }
+        } catch (error) {
+            console.error('Failed to start recording:', error);
+            this.showVoiceError('Failed to start recording. Make sure the page is loaded.');
+            this.isRecording = false;
+            this.updateRecordingUI(false);
+        }
+    }
+
+    async stopRecording() {
+        if (!this.isRecording) return;
+
+        try {
+            // Get current tab and send message to content script
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (tab && tab.id) {
+                await chrome.tabs.sendMessage(tab.id, { action: 'stopVoiceRecording' });
+            }
+
+            this.isRecording = false;
+            this.updateRecordingUI(false);
+            this.showVoiceStatus('Processing...', 'processing');
+        } catch (error) {
+            console.error('Failed to stop recording:', error);
+            this.isRecording = false;
+            this.updateRecordingUI(false);
+        }
+    }
+
+    handleVoiceStatusChanged(status) {
+        switch (status) {
+            case 'listening':
+                this.showVoiceStatus('Listening... Speak now!', 'listening');
+                break;
+            case 'ready':
+                this.showVoiceStatus('Ready to listen...', 'ready');
+                this.isRecording = false;
+                this.updateRecordingUI(false);
+                break;
+        }
+    }
+
+    handleTranscriptionComplete(text) {
+        console.log('Transcription complete:', text);
+        this.commandInput.value = text;
+
+        // Auto-send command after a brief delay
+        setTimeout(() => {
+            if (this.commandInput.value.trim()) {
+                this.sendCommand();
+            }
+        }, 500);
+    }
+
+    async processBackendCommand(data) {
+        try {
+            // Send to backend
+            const response = await fetch(`${this.backendUrl}/process-command`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            });
+
+            if (!response.ok) {
+                throw new Error(`Backend error: ${response.status}`);
+            }
+
+            const result = await response.json();
+
+            // Send result back to content script for execution
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (tab && tab.id) {
+                await chrome.tabs.sendMessage(tab.id, {
+                    action: 'executeResult',
+                    data: result
+                });
+            }
+
+            // Display result in popup
+            this.displayResult(data.query, result);
+
+        } catch (error) {
+            console.error('Backend processing error:', error);
+            this.showVoiceError(`Failed to process command: ${error.message}`);
+        }
+    }
+
+    updateRecordingUI(recording) {
+        this.recordBtn.disabled = recording;
+        this.stopBtn.disabled = !recording;
+
+        if (recording) {
+            this.recordBtn.textContent = '🔴 Recording...';
+            this.recordBtn.classList.add('recording');
+        } else {
+            this.recordBtn.textContent = '🔴 Start Recording';
+            this.recordBtn.classList.remove('recording');
+        }
+    }
+
+    showVoiceStatus(message, state = 'ready') {
+        this.voiceStatus.classList.remove('hidden');
+        this.voiceStatusText.textContent = message;
+
+        // Update indicator
+        this.voiceIndicator.className = `voice-indicator ${state}`;
+    }
+
+    showTranscriptionPreview(text) {
+        if (text.trim()) {
+            this.transcriptionPreview.textContent = text;
+            this.transcriptionPreview.classList.remove('hidden');
+        } else {
+            this.transcriptionPreview.classList.add('hidden');
+        }
+    }
+
+    showVoiceError(message) {
+        this.voiceError.textContent = message;
+        this.voiceError.classList.remove('hidden');
+    }
+
+    hideVoiceError() {
+        this.voiceError.classList.add('hidden');
     }
 }
 

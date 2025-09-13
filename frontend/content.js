@@ -5,8 +5,11 @@ class VoiceForwardContent {
         this.numberedElements = new Map();
         this.overlays = [];
         this.isShowingNumbers = false;
-        
+        this.recognition = null;
+        this.isListening = false;
+
         this.setupMessageListener();
+        this.initializeVoiceRecognition();
         console.log('VoiceForward content script loaded');
     }
     
@@ -29,6 +32,16 @@ class VoiceForwardContent {
 
                 case 'scrollUp':
                     this.scrollUp(message.amount);
+                    sendResponse({ success: true });
+                    break;
+
+                case 'startVoiceRecording':
+                    this.startVoiceRecording();
+                    sendResponse({ success: true });
+                    break;
+
+                case 'stopVoiceRecording':
+                    this.stopVoiceRecording();
                     sendResponse({ success: true });
                     break;
 
@@ -755,6 +768,150 @@ class VoiceForwardContent {
     
     wait(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    initializeVoiceRecognition() {
+        // Check for Web Speech API support
+        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+            console.error('Speech recognition not supported');
+            return;
+        }
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        this.recognition = new SpeechRecognition();
+
+        // Configure recognition
+        this.recognition.continuous = true;
+        this.recognition.interimResults = true;
+        this.recognition.lang = 'en-US';
+        this.recognition.maxAlternatives = 1;
+
+        // Set up event handlers
+        this.recognition.onstart = () => {
+            console.log('Voice recognition started');
+            this.isListening = true;
+            this.sendMessageToPopup({ type: 'voiceStatusChanged', status: 'listening' });
+        };
+
+        this.recognition.onresult = (event) => {
+            let finalTranscript = '';
+            let interimTranscript = '';
+
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const transcript = event.results[i][0].transcript;
+                if (event.results[i].isFinal) {
+                    finalTranscript += transcript;
+                } else {
+                    interimTranscript += transcript;
+                }
+            }
+
+            // Send interim results to popup for preview
+            if (interimTranscript) {
+                this.sendMessageToPopup({
+                    type: 'transcriptionUpdate',
+                    text: finalTranscript + interimTranscript
+                });
+            }
+
+            // Process final results
+            if (finalTranscript.trim()) {
+                console.log('Final transcript:', finalTranscript);
+                this.sendMessageToPopup({
+                    type: 'transcriptionComplete',
+                    text: finalTranscript.trim()
+                });
+                this.processVoiceCommand(finalTranscript.trim());
+            }
+        };
+
+        this.recognition.onerror = (event) => {
+            console.error('Speech recognition error:', event.error);
+            this.isListening = false;
+
+            let errorMessage = 'Voice recognition error: ';
+            switch (event.error) {
+                case 'not-allowed':
+                    errorMessage += 'Microphone access denied. Please allow microphone access and try again.';
+                    break;
+                case 'no-speech':
+                    errorMessage += 'No speech detected.';
+                    break;
+                case 'audio-capture':
+                    errorMessage += 'Microphone not available.';
+                    break;
+                default:
+                    errorMessage += event.error;
+            }
+
+            this.sendMessageToPopup({
+                type: 'voiceError',
+                error: errorMessage
+            });
+        };
+
+        this.recognition.onend = () => {
+            console.log('Voice recognition ended');
+            this.isListening = false;
+            this.sendMessageToPopup({ type: 'voiceStatusChanged', status: 'ready' });
+        };
+    }
+
+    startVoiceRecording() {
+        if (this.isListening || !this.recognition) return;
+
+        try {
+            this.recognition.start();
+            console.log('Starting voice recognition...');
+        } catch (error) {
+            console.error('Failed to start recognition:', error);
+            this.sendMessageToPopup({
+                type: 'voiceError',
+                error: 'Failed to start voice recognition'
+            });
+        }
+    }
+
+    stopVoiceRecording() {
+        if (!this.isListening || !this.recognition) return;
+
+        this.recognition.stop();
+        console.log('Stopping voice recognition...');
+    }
+
+    async processVoiceCommand(command) {
+        console.log('Processing voice command:', command);
+
+        try {
+            // Get DOM context
+            const domContext = this.getDOMContext();
+
+            // Prepare request for backend
+            const requestData = {
+                query: command,
+                page_context: domContext
+            };
+
+            // Send to backend via popup
+            this.sendMessageToPopup({
+                type: 'processCommand',
+                data: requestData
+            });
+
+        } catch (error) {
+            console.error('Error processing voice command:', error);
+            this.sendMessageToPopup({
+                type: 'voiceError',
+                error: 'Failed to process voice command'
+            });
+        }
+    }
+
+    sendMessageToPopup(message) {
+        // Send message to popup via background script
+        chrome.runtime.sendMessage(message).catch(error => {
+            console.log('Could not send message to popup:', error);
+        });
     }
 }
 
