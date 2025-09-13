@@ -9,6 +9,10 @@
     "storage",
     "scripting"
   ],
+
+  "host_permissions": [
+    "http://localhost:8000/*"
+  ],
   
   "action": {
     "default_popup": "popup.html",
