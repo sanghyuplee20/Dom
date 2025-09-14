@@ -67,6 +67,21 @@ class VoiceForwardContent {
                     sendResponse({ success: true });
                     break;
 
+                case 'switchTab':
+                    this.switchTab(message.direction);
+                    sendResponse({ success: true });
+                    break;
+
+                case 'createNewTab':
+                    this.createNewTab(message.url);
+                    sendResponse({ success: true });
+                    break;
+
+                case 'closeCurrentTab':
+                    this.closeCurrentTab();
+                    sendResponse({ success: true });
+                    break;
+
                 default:
                     console.warn('Unknown message action:', message.action);
             }
@@ -655,6 +670,18 @@ class VoiceForwardContent {
             case 'hide_numbers':
                 this.hideNumbers();
                 console.log('Numbers hidden by explicit command');
+                break;
+
+            case 'switch_tab':
+                await this.switchTabAction(action);
+                break;
+
+            case 'create_tab':
+                await this.createTabAction(action);
+                break;
+
+            case 'close_tab':
+                await this.closeTabAction(action);
                 break;
 
             default:
@@ -1912,6 +1939,65 @@ class VoiceForwardContent {
         // This method is now replaced by autoStartWakeWordListening
         // but keeping it for compatibility with existing popup behavior
         console.log('Legacy checkInitialRecordingState called');
+    }
+
+    // Tab switching functionality
+    async switchTab(direction) {
+        console.log(`Switching tab ${direction}`);
+
+        try {
+            // Send message to background script to handle tab switching
+            await chrome.runtime.sendMessage({
+                type: 'switchTab',
+                direction: direction
+            });
+        } catch (error) {
+            console.error('Failed to switch tab:', error);
+        }
+    }
+
+    async createNewTab(url = null) {
+        console.log('Creating new tab', url ? `with URL: ${url}` : '');
+
+        try {
+            // Send message to background script to create new tab
+            await chrome.runtime.sendMessage({
+                type: 'createNewTab',
+                url: url
+            });
+        } catch (error) {
+            console.error('Failed to create new tab:', error);
+        }
+    }
+
+    async closeCurrentTab() {
+        console.log('Closing current tab');
+
+        try {
+            // Send message to background script to close current tab
+            await chrome.runtime.sendMessage({
+                type: 'closeCurrentTab'
+            });
+        } catch (error) {
+            console.error('Failed to close current tab:', error);
+        }
+    }
+
+    async switchTabAction(action) {
+        const direction = action.direction || 'next';
+        console.log(`Tab switch action: ${direction}`);
+        await this.switchTab(direction);
+    }
+
+    async createTabAction(action) {
+        const url = action.url || null;
+        console.log(`Create tab action:`, url);
+        await this.createNewTab(url);
+    }
+
+    async closeTabAction() {
+        console.log('Close tab action');
+        await this.closeCurrentTab();
     }
 }
 

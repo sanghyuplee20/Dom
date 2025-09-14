@@ -84,7 +84,7 @@ class WebActionParser(BaseOutputParser):
             return False
         
         # Action type must be valid
-        valid_actions = ["click", "type", "scroll", "wait", "navigate", "hover", "focus"]
+        valid_actions = ["click", "type", "scroll", "wait", "navigate", "hover", "focus", "switch_tab", "create_tab", "close_tab"]
         if action["action"].lower() not in valid_actions:
             return False
         
@@ -147,6 +147,9 @@ AVAILABLE ACTIONS:
 5. navigate - Navigate to a URL (requires url)
 6. hover - Hover over an element (requires target)
 7. focus - Focus on an element (requires target)
+8. switch_tab - Switch to next/previous tab (requires direction: next/previous)
+9. create_tab - Create a new tab (optional url parameter)
+10. close_tab - Close the current tab
 
 CURRENT PAGE CONTEXT:
 URL: {url}
@@ -207,6 +210,21 @@ Voice: "fill out the contact form with my email"
   {{"action": "type", "text": "user@example.com", "target": "email field", "confidence": 0.85}}
 ]
 
+Voice: "open new tab"
+[
+  {{"action": "create_tab", "target": "browser", "confidence": 1.0}}
+]
+
+Voice: "switch to next tab"
+[
+  {{"action": "switch_tab", "direction": "next", "target": "browser", "confidence": 1.0}}
+]
+
+Voice: "close current tab"
+[
+  {{"action": "close_tab", "target": "browser", "confidence": 1.0}}
+]
+
 Return ONLY the JSON array, no additional text:
 """)
 
@@ -245,7 +263,8 @@ COMMAND TYPES:
 1. "show_numbers" - User wants to see numbered elements on the page
 2. "number_command" - User is referring to numbered elements (e.g., "click number 3")
 3. "navigation" - User wants to navigate to a website or URL
-4. "action_planning" - User wants to perform actions on the current page
+4. "tab_control" - User wants to control browser tabs (switch, create, close)
+5. "action_planning" - User wants to perform actions on the current page
 
 USER COMMAND: "{voice_command}"
 
@@ -253,17 +272,21 @@ CLASSIFICATION RULES:
 - "show_numbers": Commands like "show numbers", "display numbers", "number mode"
 - "number_command": Commands mentioning specific numbers like "click 1", "number 5", "press two"
 - "navigation": Commands like "go to youtube.com", "visit google", "open facebook", "navigate to amazon"
+- "tab_control": Commands like "new tab", "next tab", "previous tab", "close tab", "switch tab"
 - "action_planning": All other commands for page interactions
 
 EXAMPLES:
 "show me the numbers" → "show_numbers"
 "click number 3" → "number_command"
 "go to youtube.com" → "navigation"
+"new tab" → "tab_control"
+"next tab" → "tab_control"
+"close tab" → "tab_control"
 "search for shoes" → "action_planning"
 "visit google" → "navigation"
 "click the login button" → "action_planning"
 
-Return ONLY the classification type as a single word: show_numbers, number_command, navigation, or action_planning
+Return ONLY the classification type as a single word: show_numbers, number_command, navigation, tab_control, or action_planning
 """)
 
         # Navigation URL extraction prompt
@@ -658,7 +681,7 @@ Do not include any other text, explanation, or markdown formatting.
             classification = response.content.strip().lower()
 
             # Validate the classification
-            valid_classifications = ["show_numbers", "number_command", "navigation", "action_planning"]
+            valid_classifications = ["show_numbers", "number_command", "navigation", "tab_control", "action_planning"]
             if classification in valid_classifications:
                 logger.info(f"LLM classified '{voice_command}' as '{classification}'")
                 return classification

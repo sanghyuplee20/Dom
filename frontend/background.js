@@ -54,6 +54,21 @@ class VoiceForwardBackground {
                     sendResponse({ success: true });
                     break;
 
+                case 'switchTab':
+                    this.switchTab(message.direction);
+                    sendResponse({ success: true });
+                    break;
+
+                case 'createNewTab':
+                    this.createNewTab(message.url);
+                    sendResponse({ success: true });
+                    break;
+
+                case 'closeCurrentTab':
+                    this.closeCurrentTab(sender.tab?.id);
+                    sendResponse({ success: true });
+                    break;
+
                 default:
                     // Forward other messages (for popup <-> content script communication)
                     return false; // Allow other handlers to process
@@ -102,6 +117,69 @@ class VoiceForwardBackground {
         } else {
             chrome.action.setBadgeText({ text: '' });
             chrome.action.setTitle({ title: 'VoiceForward Test' });
+        }
+    }
+
+    async switchTab(direction) {
+        try {
+            const tabs = await chrome.tabs.query({ currentWindow: true });
+            if (tabs.length <= 1) {
+                console.log('Only one tab open, cannot switch');
+                return;
+            }
+
+            const activeTab = tabs.find(tab => tab.active);
+            if (!activeTab) return;
+
+            const currentIndex = tabs.indexOf(activeTab);
+            let targetIndex;
+
+            if (direction === 'next' || direction === 'right') {
+                targetIndex = (currentIndex + 1) % tabs.length;
+            } else if (direction === 'previous' || direction === 'prev' || direction === 'left') {
+                targetIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+            } else {
+                console.warn('Invalid tab switch direction:', direction);
+                return;
+            }
+
+            const targetTab = tabs[targetIndex];
+            await chrome.tabs.update(targetTab.id, { active: true });
+            console.log(`Switched from tab ${currentIndex} to tab ${targetIndex}`);
+        } catch (error) {
+            console.error('Failed to switch tab:', error);
+        }
+    }
+
+    async createNewTab(url = null) {
+        try {
+            const newTabOptions = { active: true };
+            if (url) {
+                newTabOptions.url = url;
+            }
+
+            const newTab = await chrome.tabs.create(newTabOptions);
+            console.log('Created new tab:', newTab.id, url ? `with URL: ${url}` : '');
+        } catch (error) {
+            console.error('Failed to create new tab:', error);
+        }
+    }
+
+    async closeCurrentTab(tabId = null) {
+        try {
+            if (tabId) {
+                await chrome.tabs.remove(tabId);
+                console.log('Closed tab:', tabId);
+            } else {
+                // Get current active tab if no specific tab ID provided
+                const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+                if (activeTab) {
+                    await chrome.tabs.remove(activeTab.id);
+                    console.log('Closed current active tab:', activeTab.id);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to close tab:', error);
         }
     }
 }

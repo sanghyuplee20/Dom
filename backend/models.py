@@ -47,7 +47,7 @@ class CommandRequest(BaseModel):
 class Action(BaseModel):
     """Represents a single action to be executed"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    action: str = Field(..., description="Type of action: click, type, scroll, wait, navigate")
+    action: str = Field(..., description="Type of action: click, type, scroll, wait, navigate, hover, focus, switch_tab, create_tab, close_tab")
     target: Optional[str] = Field("", description="Description of target element")
     text: Optional[str] = Field("", description="Text to type (for type actions)")
     selector: Optional[str] = Field("", description="CSS selector for target element")
@@ -63,7 +63,7 @@ class Action(BaseModel):
     
     @validator('action')
     def action_must_be_valid(cls, v):
-        valid_actions = ['click', 'type', 'scroll', 'wait', 'navigate', 'hover', 'focus']
+        valid_actions = ['click', 'type', 'scroll', 'wait', 'navigate', 'hover', 'focus', 'switch_tab', 'create_tab', 'close_tab']
         if v.lower() not in valid_actions:
             raise ValueError(f'Action must be one of: {valid_actions}')
         return v.lower()

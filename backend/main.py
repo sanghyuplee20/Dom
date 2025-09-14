@@ -111,8 +111,11 @@ async def process_command(request: CommandRequest):
         elif command_type == "navigation":
             # Step 2d: Handle navigation commands
             return await handle_navigation_command(request)
+        elif command_type == "tab_control":
+            # Step 2e: Handle tab control commands
+            return await handle_tab_control_command(request)
         else:
-            # Step 2e: Handle action planning command
+            # Step 2f: Handle action planning command
             return await handle_action_planning(request)
 
     except Exception as e:
@@ -170,6 +173,18 @@ def classify_command_fallback(query: str) -> str:
     for pattern in navigation_patterns:
         if pattern in query_lower:
             return "navigation"
+
+    # Check for tab control patterns
+    tab_control_patterns = [
+        "new tab", "create tab", "open tab", "open new tab",
+        "next tab", "switch tab", "tab right", "go to next tab",
+        "previous tab", "prev tab", "tab left", "go to previous tab", "last tab",
+        "close tab", "close current tab", "close this tab"
+    ]
+
+    for pattern in tab_control_patterns:
+        if pattern in query_lower:
+            return "tab_control"
 
     # Check for direct number commands (when numbers are already showing)
     import re
@@ -673,6 +688,119 @@ async def handle_navigation_command(request: CommandRequest) -> ActionSequenceRe
     except Exception as e:
         logger.error(f"Error in handle_navigation_command: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to process navigation command: {str(e)}")
+
+async def handle_tab_control_command(request: CommandRequest) -> ActionSequenceResponse:
+    """
+    Handle tab control commands like "new tab", "next tab", "close tab"
+    """
+    try:
+        logger.info(f"Processing tab control command: {request.query}")
+
+        query_lower = request.query.lower().strip()
+        actions = []
+
+        # Determine the tab action based on the command
+        if any(phrase in query_lower for phrase in ["new tab", "create tab", "open tab", "open new tab"]):
+            # Extract URL if mentioned
+            url = None
+            if any(word in query_lower for word in ["with", "to", "for", "at"]):
+                # Try to extract URL using Gemini
+                try:
+                    url = await gemini_planner.extract_navigation_url(request.query)
+                    if url == "https://www.google.com":  # Default fallback
+                        url = None  # Let browser open default new tab
+                except:
+                    url = None
+
+            tab_action = Action(
+                id=str(uuid.uuid4()),
+                action="create_tab",
+                target="browser",
+                text="",
+                selector="",
+                url=url,
+                coordinates=None,
+                wait_time=1.0,
+                sequence_order=1,
+                confidence=0.95
+            )
+            actions.append(tab_action)
+
+        elif any(phrase in query_lower for phrase in ["next tab", "switch tab", "tab right", "go to next tab"]):
+            tab_action = Action(
+                id=str(uuid.uuid4()),
+                action="switch_tab",
+                target="browser",
+                text="",
+                selector="",
+                direction="next",
+                coordinates=None,
+                wait_time=0.5,
+                sequence_order=1,
+                confidence=0.95
+            )
+            actions.append(tab_action)
+
+        elif any(phrase in query_lower for phrase in ["previous tab", "prev tab", "tab left", "go to previous tab", "last tab"]):
+            tab_action = Action(
+                id=str(uuid.uuid4()),
+                action="switch_tab",
+                target="browser",
+                text="",
+                selector="",
+                direction="previous",
+                coordinates=None,
+                wait_time=0.5,
+                sequence_order=1,
+                confidence=0.95
+            )
+            actions.append(tab_action)
+
+        elif any(phrase in query_lower for phrase in ["close tab", "close current tab", "close this tab"]):
+            tab_action = Action(
+                id=str(uuid.uuid4()),
+                action="close_tab",
+                target="browser",
+                text="",
+                selector="",
+                coordinates=None,
+                wait_time=0.5,
+                sequence_order=1,
+                confidence=0.95
+            )
+            actions.append(tab_action)
+
+        else:
+            # Default to creating a new tab if no specific action detected
+            tab_action = Action(
+                id=str(uuid.uuid4()),
+                action="create_tab",
+                target="browser",
+                text="",
+                selector="",
+                coordinates=None,
+                wait_time=1.0,
+                sequence_order=1,
+                confidence=0.7
+            )
+            actions.append(tab_action)
+
+        if not actions:
+            raise ValueError("Could not determine tab control action")
+
+        return ActionSequenceResponse(
+            command_type="action_sequence",
+            original_command=request.query,
+            actions=actions,
+            total_actions=len(actions),
+            estimated_duration=sum(action.wait_time for action in actions),
+            confidence_score=sum(action.confidence for action in actions) / len(actions),
+            instructions=f"Executing tab control action: {actions[0].action}"
+        )
+
+    except Exception as e:
+        logger.error(f"Error in handle_tab_control_command: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to process tab control command: {str(e)}")
 
 def is_interactive_element(element: DOMElement) -> bool:
     """
