@@ -1816,6 +1816,9 @@ class VoiceForwardContent {
                     text: fullCommand
                 });
 
+                // Update floating indicator with transcribed text
+                this.updateTranscriptionDisplay(fullCommand);
+
                 // Clear existing timeout
                 if (this.interimTimeout) {
                     clearTimeout(this.interimTimeout);
@@ -1842,6 +1845,9 @@ class VoiceForwardContent {
                                 type: 'recordingStopped',
                                 text: 'Recording deactivated - say "Hey Dom" to reactivate'
                             });
+
+                            // Clear transcription display
+                            this.updateTranscriptionDisplay('');
                             return;
                         }
 
@@ -1850,6 +1856,11 @@ class VoiceForwardContent {
                             text: fullCommand
                         });
                         this.processVoiceCommand(fullCommand);
+
+                        // Clear transcription display after processing
+                        setTimeout(() => {
+                            this.updateTranscriptionDisplay('');
+                        }, 1000);
 
                         // Stay in activated mode - don't reset
 
@@ -1895,6 +1906,9 @@ class VoiceForwardContent {
                         type: 'recordingStopped',
                         text: 'Recording deactivated - say "Hey Dom" to reactivate'
                     });
+
+                    // Clear transcription display
+                    this.updateTranscriptionDisplay('');
                     return;
                 }
 
@@ -1903,6 +1917,11 @@ class VoiceForwardContent {
                     text: command
                 });
                 this.processVoiceCommand(command);
+
+                // Clear transcription display after processing
+                setTimeout(() => {
+                    this.updateTranscriptionDisplay('');
+                }, 1000);
 
                 // Stay in activated mode - don't reset
 
@@ -2116,8 +2135,11 @@ class VoiceForwardContent {
         this.floatingIndicator = document.createElement('div');
         this.floatingIndicator.className = 'vf-floating-indicator';
         this.floatingIndicator.innerHTML = `
-            <div class="vf-indicator-dot"></div>
-            <div class="vf-indicator-text">REC</div>
+            <div class="vf-indicator-main">
+                <div class="vf-indicator-dot"></div>
+                <div class="vf-indicator-text">REC</div>
+            </div>
+            <div class="vf-transcription-text"></div>
         `;
 
         // Get saved position or use defaults
@@ -2128,15 +2150,14 @@ class VoiceForwardContent {
             position: fixed !important;
             top: ${savedPosition.top}px !important;
             right: ${savedPosition.right}px !important;
-            width: 80px !important;
-            height: 35px !important;
+            min-width: 80px !important;
+            max-width: 250px !important;
+            min-height: 35px !important;
             background: rgba(102, 126, 234, 0.95) !important;
             color: white !important;
             border-radius: 20px !important;
             display: none !important;
-            align-items: center !important;
-            justify-content: center !important;
-            gap: 8px !important;
+            flex-direction: column !important;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
             font-size: 12px !important;
             font-weight: bold !important;
@@ -2147,7 +2168,20 @@ class VoiceForwardContent {
             cursor: move !important;
             transition: none !important;
             user-select: none !important;
+            padding: 8px !important;
         `;
+
+        // Style the main indicator section
+        const mainIndicator = this.floatingIndicator.querySelector('.vf-indicator-main');
+        if (mainIndicator) {
+            mainIndicator.style.cssText = `
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                gap: 8px !important;
+                min-height: 20px !important;
+            `;
+        }
 
         // Style the dot
         const dot = this.floatingIndicator.querySelector('.vf-indicator-dot');
@@ -2158,6 +2192,23 @@ class VoiceForwardContent {
                 background: white !important;
                 border-radius: 50% !important;
                 animation: vf-pulse 1s infinite !important;
+            `;
+        }
+
+        // Style the transcription text
+        const transcriptionText = this.floatingIndicator.querySelector('.vf-transcription-text');
+        if (transcriptionText) {
+            transcriptionText.style.cssText = `
+                font-size: 10px !important;
+                font-weight: normal !important;
+                opacity: 0.9 !important;
+                margin-top: 4px !important;
+                text-align: center !important;
+                word-wrap: break-word !important;
+                max-height: 40px !important;
+                overflow: hidden !important;
+                line-height: 1.2 !important;
+                display: none !important;
             `;
         }
 
@@ -2332,6 +2383,20 @@ class VoiceForwardContent {
 
             // Ensure position is still within bounds after window resize
             this.validateFloaterPosition();
+        }
+    }
+
+    updateTranscriptionDisplay(text) {
+        if (!this.floatingIndicator) return;
+
+        const transcriptionElement = this.floatingIndicator.querySelector('.vf-transcription-text');
+        if (transcriptionElement) {
+            if (text && text.trim().length > 0) {
+                transcriptionElement.textContent = text.trim();
+                transcriptionElement.style.display = 'block';
+            } else {
+                transcriptionElement.style.display = 'none';
+            }
         }
     }
 
