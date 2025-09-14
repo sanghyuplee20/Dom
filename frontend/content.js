@@ -1746,7 +1746,7 @@ class VoiceForwardContent {
                     'a don', 'a tom', 'a done', 'aide on', 'hey damn',
                     'hey deem', 'hey dim', 'hay dom', 'hey doom', 'hey dom',
                     'hey dom', 'hey dom', 'hey dom', 'hey dom', 'hey dom',
-                    'dom', 'don', 'tom', 'dumb', 'dawn'  // Even more lenient - just the name variations
+                    'dom', 'don', 'tom', 'dumb', 'dawn', 'hey' // Even more lenient - just the name variations
                 ];
 
                 // More flexible matching - check if any variation is contained or sounds similar
