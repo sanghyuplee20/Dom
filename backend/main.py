@@ -102,14 +102,17 @@ async def process_command(request: CommandRequest):
         if command_type == "show_numbers":
             # Step 2a: Handle "show numbers" command
             return await handle_show_numbers(request)
+        elif command_type == "hide_numbers":
+            # Step 2b: Handle "hide numbers" command
+            return await handle_hide_numbers(request)
         elif command_type == "number_command":
-            # Step 2b: Handle number-based commands (click on 2, etc.)
+            # Step 2c: Handle number-based commands (click on 2, etc.)
             return await handle_number_command(request)
         elif command_type == "navigation":
-            # Step 2c: Handle navigation commands
+            # Step 2d: Handle navigation commands
             return await handle_navigation_command(request)
         else:
-            # Step 2d: Handle action planning command
+            # Step 2e: Handle action planning command
             return await handle_action_planning(request)
 
     except Exception as e:
@@ -147,6 +150,16 @@ def classify_command_fallback(query: str) -> str:
     for pattern in show_numbers_patterns:
         if pattern in query_lower:
             return "show_numbers"
+
+    # Check for "hide numbers" or "clear numbers" variations
+    hide_numbers_patterns = [
+        "hide numbers", "clear numbers", "remove numbers", "turn off numbers",
+        "disable numbers", "stop numbering", "close numbers"
+    ]
+
+    for pattern in hide_numbers_patterns:
+        if pattern in query_lower:
+            return "hide_numbers"
 
     # Check for navigation patterns
     navigation_patterns = [
@@ -469,6 +482,40 @@ async def handle_show_numbers(request: CommandRequest) -> ShowNumbersResponse:
         logger.error(f"Error in handle_show_numbers: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to process show numbers: {str(e)}")
 
+async def handle_hide_numbers(request: CommandRequest) -> ActionSequenceResponse:
+    """
+    Handle "hide numbers" command - clear the numbered overlays
+    """
+    try:
+        logger.info("Processing hide numbers command")
+
+        # Create a simple action to hide numbers
+        hide_action = Action(
+            id=str(uuid.uuid4()),
+            action="hide_numbers",
+            target="numbers",
+            text="",
+            selector="",
+            coordinates=None,
+            wait_time=0.1,
+            sequence_order=1,
+            confidence=1.0
+        )
+
+        return ActionSequenceResponse(
+            command_type="action_sequence",
+            original_command=request.query,
+            actions=[hide_action],
+            total_actions=1,
+            estimated_duration=0.1,
+            confidence_score=1.0,
+            instructions="Hiding numbered elements"
+        )
+
+    except Exception as e:
+        logger.error(f"Error in handle_hide_numbers: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to process hide numbers: {str(e)}")
+
 async def handle_number_command(request: CommandRequest) -> ActionSequenceResponse:
     """
     Handle number-based commands like "click on 2" or "type hello in 3"
@@ -499,26 +546,38 @@ async def handle_number_command(request: CommandRequest) -> ActionSequenceRespon
         # Process click actions
         for action_verb, number_str in click_matches:
             number = word_to_num.get(number_str, number_str)
-            actions.append({
-                "action": "click",
-                "target": f"number_{number}",
-                "selector": f"[data-number='{number}']",
-                "number_reference": int(number),
-                "confidence": 0.95
-            })
+            try:
+                number_int = int(number)
+                actions.append({
+                    "action": "click",
+                    "target": f"number_{number_int}",
+                    "selector": f"[data-number='{number_int}']",
+                    "number_reference": number_int,
+                    "confidence": 0.95,
+                    "coordinates": None  # Will be filled by validation if needed
+                })
+            except ValueError:
+                logger.warning(f"Could not parse number: {number_str}")
+                continue
         
-        # Process type actions  
+        # Process type actions
         for action_verb, text, number_str in type_matches:
             number = word_to_num.get(number_str, number_str)
             text = text.strip()
-            actions.append({
-                "action": "type",
-                "text": text,
-                "target": f"number_{number}",
-                "selector": f"[data-number='{number}']",
-                "number_reference": int(number),
-                "confidence": 0.95
-            })
+            try:
+                number_int = int(number)
+                actions.append({
+                    "action": "type",
+                    "text": text,
+                    "target": f"number_{number_int}",
+                    "selector": f"[data-number='{number_int}']",
+                    "number_reference": number_int,
+                    "confidence": 0.95,
+                    "coordinates": None  # Will be filled by validation if needed
+                })
+            except ValueError:
+                logger.warning(f"Could not parse number for type action: {number_str}")
+                continue
         
         # If no specific patterns matched, try to extract any number for a generic click
         if not actions:
@@ -526,13 +585,19 @@ async def handle_number_command(request: CommandRequest) -> ActionSequenceRespon
             if number_match:
                 number_str = number_match.group(1)
                 number = word_to_num.get(number_str, number_str)
-                actions.append({
-                    "action": "click",
-                    "target": f"number_{number}",
-                    "selector": f"[data-number='{number}']", 
-                    "number_reference": int(number),
-                    "confidence": 0.8
-                })
+                try:
+                    number_int = int(number)
+                    actions.append({
+                        "action": "click",
+                        "target": f"number_{number_int}",
+                        "selector": f"[data-number='{number_int}']",
+                        "number_reference": number_int,
+                        "confidence": 0.8,
+                        "coordinates": None  # Will be filled by validation if needed
+                    })
+                except ValueError:
+                    logger.warning(f"Could not parse fallback number: {number_str}")
+                    pass
         
         if not actions:
             raise ValueError("Could not extract number-based actions from command")

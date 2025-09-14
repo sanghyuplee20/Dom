@@ -11,6 +11,7 @@ class VoiceForwardContent {
         this.floatingIndicator = null;
         this.isWaitingForWakeWord = true;
         this.wakeWord = 'hey dom';
+        this.currentUrl = window.location.href;
 
         this.setupMessageListener();
         this.initializeVoiceRecognition();
@@ -315,12 +316,30 @@ class VoiceForwardContent {
     
     async executeResult(result) {
         console.log('Executing result:', result);
-        
+
         if (result.command_type === 'show_numbers') {
             this.showNumbers(result.numbered_elements);
         } else if (result.command_type === 'action_sequence') {
-            this.hideNumbers();
+            // DO NOT hide numbers here - we need them for number-based actions!
+            console.log('Executing action sequence while preserving numbers');
             await this.executeActions(result.actions);
+
+            // Only hide numbers after action execution is complete and if the action succeeded
+            // This gives users a chance to see the result and try another number if needed
+            setTimeout(() => {
+                // Check if the action involved clicking a numbered element
+                const hasNumberAction = result.actions?.some(action =>
+                    action.target && action.target.startsWith('number_')
+                );
+
+                if (hasNumberAction) {
+                    console.log('Number-based action completed, keeping numbers visible for next interaction');
+                    // Keep numbers visible for potential follow-up actions
+                } else {
+                    // Non-number actions can hide the numbers
+                    this.hideNumbers();
+                }
+            }, 1000);
         }
     }
     
@@ -581,10 +600,25 @@ class VoiceForwardContent {
     }
     
     async executeAction(action) {
-        console.log('Executing action:', action);
+        console.log('=== EXECUTING ACTION ===');
+        console.log('Action:', action);
         console.log('Numbers currently showing:', this.isShowingNumbers);
         console.log('Available numbered elements:', Array.from(this.numberedElements.keys()));
-        
+        console.log('Total overlays:', this.overlays.length);
+
+        // Log the full state before action
+        if (action.target && action.target.startsWith('number_')) {
+            const number = parseInt(action.target.split('_')[1]);
+            console.log(`About to execute action on number ${number}`);
+            const element = this.numberedElements.get(number);
+            if (element) {
+                console.log(`Element for number ${number} exists:`, element);
+                console.log('Element in DOM:', document.contains(element));
+            } else {
+                console.error(`CRITICAL: No element stored for number ${number}`);
+            }
+        }
+
         switch (action.action) {
             case 'click':
                 await this.clickAction(action);
@@ -614,6 +648,11 @@ class VoiceForwardContent {
                 await this.navigateAction(action);
                 break;
 
+            case 'hide_numbers':
+                this.hideNumbers();
+                console.log('Numbers hidden by explicit command');
+                break;
+
             default:
                 console.warn('Unknown action type:', action.action);
         }
@@ -621,20 +660,155 @@ class VoiceForwardContent {
     
     async clickAction(action) {
         const element = this.findActionTarget(action);
-        if (element) {
+        if (!element) {
+            throw new Error(`Could not find element to click: ${action.target || action.selector || 'unknown target'}`);
+        }
+
+        try {
+            console.log('Attempting to click element:', element);
             this.highlightElement(element);
-            
-            // Scroll into view if needed
-            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            await this.wait(500);
-            
-            // Click the element
-            element.click();
-            element.focus();
-            
-            console.log('Clicked element:', element);
-        } else {
-            throw new Error(`Could not find element to click: ${action.target}`);
+
+            // Ensure element is interactable before proceeding
+            if (!this.isElementInteractable(element)) {
+                console.warn('Element found but not interactable, trying to make it interactable...');
+
+                // Try to scroll the element into view
+                element.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+                await this.wait(1000); // Give more time for scrolling
+
+                // Check again after scrolling
+                if (!this.isElementInteractable(element)) {
+                    throw new Error(`Element is not interactable after scrolling: ${element.tagName}`);
+                }
+            }
+
+            // Try multiple click methods for better compatibility
+            const clickMethods = [
+                // Method 1: Standard click
+                () => {
+                    console.log('Trying standard click...');
+                    element.click();
+                },
+
+                // Method 2: Focus then click
+                () => {
+                    console.log('Trying focus then click...');
+                    element.focus();
+                    element.click();
+                },
+
+                // Method 3: Dispatch mouse events
+                () => {
+                    console.log('Trying mouse events...');
+                    const rect = element.getBoundingClientRect();
+                    const centerX = rect.left + rect.width / 2;
+                    const centerY = rect.top + rect.height / 2;
+
+                    ['mousedown', 'mouseup', 'click'].forEach(eventType => {
+                        const event = new MouseEvent(eventType, {
+                            view: window,
+                            bubbles: true,
+                            cancelable: true,
+                            clientX: centerX,
+                            clientY: centerY
+                        });
+                        element.dispatchEvent(event);
+                    });
+                },
+
+                // Method 4: Try synthetic click event
+                () => {
+                    console.log('Trying synthetic click event...');
+                    const clickEvent = new Event('click', {
+                        bubbles: true,
+                        cancelable: true
+                    });
+                    element.dispatchEvent(clickEvent);
+                }
+            ];
+
+            // Try each method until one works or all fail
+            let clicked = false;
+            for (let i = 0; i < clickMethods.length && !clicked; i++) {
+                try {
+                    clickMethods[i]();
+
+                    // Brief wait to see if the click had an effect
+                    await this.wait(200);
+
+                    // Check if the page changed or element state changed
+                    if (this.hasPageOrElementChanged(element)) {
+                        clicked = true;
+                        console.log(`Click method ${i + 1} succeeded`);
+                        break;
+                    }
+                } catch (methodError) {
+                    console.warn(`Click method ${i + 1} failed:`, methodError);
+                }
+            }
+
+            // Special handling for specific element types
+            if (!clicked) {
+                if (element.tagName === 'A' && element.href) {
+                    console.log('Trying navigation for link element...');
+                    window.location.href = element.href;
+                    clicked = true;
+                } else if (element.tagName === 'INPUT' && element.type === 'submit') {
+                    console.log('Trying form submission...');
+                    const form = element.closest('form');
+                    if (form) {
+                        form.submit();
+                        clicked = true;
+                    }
+                }
+            }
+
+            if (clicked) {
+                console.log('Successfully clicked element:', element);
+                // Give the page time to respond
+                await this.wait(300);
+            } else {
+                throw new Error(`All click methods failed for element: ${element.tagName}`);
+            }
+
+        } catch (error) {
+            console.error('Click action failed:', error);
+            // Try to provide more context about the failure
+            const elementInfo = {
+                tagName: element.tagName,
+                id: element.id,
+                className: element.className,
+                textContent: element.textContent?.substring(0, 50)
+            };
+            throw new Error(`Click failed: ${error.message}. Element info: ${JSON.stringify(elementInfo)}`);
+        }
+    }
+
+    hasPageOrElementChanged(element) {
+        // Simple heuristics to detect if something changed after click
+        try {
+            // Check if URL changed
+            if (this.currentUrl !== window.location.href) {
+                this.currentUrl = window.location.href;
+                return true;
+            }
+
+            // Check if element is still in the same state
+            const rect = element.getBoundingClientRect();
+            if (rect.width === 0 && rect.height === 0) {
+                // Element might have been hidden/removed
+                return true;
+            }
+
+            // Check if focus changed
+            if (document.activeElement !== element && document.activeElement !== document.body) {
+                return true;
+            }
+
+            // Default: assume click had some effect
+            return true;
+        } catch (e) {
+            return true;
         }
     }
     
@@ -726,56 +900,210 @@ class VoiceForwardContent {
     
     findActionTarget(action) {
         // Try different strategies to find the target element
-        
-        // Strategy 1: Use validated selector if available
+        console.log('Finding target for action:', action);
+
+        // Strategy 1: Find by numbered element (highest priority)
+        if (action.target && action.target.startsWith('number_')) {
+            const number = parseInt(action.target.split('_')[1]);
+            console.log(`Looking for numbered element ${number}`);
+            console.log(`Available numbered elements:`, Array.from(this.numberedElements.keys()));
+            console.log(`Numbers showing:`, this.isShowingNumbers);
+            console.log(`Total overlays:`, this.overlays.length);
+
+            const element = this.numberedElements.get(number);
+            if (element) {
+                console.log(`Found element for number ${number}:`, element);
+
+                // Check if element is still in DOM
+                if (!document.contains(element)) {
+                    console.warn(`Element for number ${number} is no longer in DOM`);
+                    return null;
+                }
+
+                if (this.isElementInteractable(element)) {
+                    console.log(`Element ${number} is interactable, returning it`);
+                    return element;
+                } else {
+                    console.warn(`Element ${number} found but not interactable:`, {
+                        tagName: element.tagName,
+                        visible: element.offsetParent !== null,
+                        disabled: element.disabled,
+                        display: getComputedStyle(element).display,
+                        visibility: getComputedStyle(element).visibility
+                    });
+                }
+            } else {
+                console.error(`No element found for number ${number}!`);
+                console.log('Full numbered elements map:', this.numberedElements);
+            }
+        }
+
+        // Strategy 2: Use validated selector if available
         if (action.validated_selector) {
             try {
                 const element = document.querySelector(action.validated_selector);
-                if (element) return element;
-            } catch (e) {}
-        }
-        
-        // Strategy 2: Use original selector
-        if (action.selector) {
-            try {
-                const element = document.querySelector(action.selector);
-                if (element) return element;
-            } catch (e) {}
-        }
-        
-        // Strategy 3: Find by numbered element (if numbers are showing)
-        if (action.target && action.target.startsWith('number_')) {
-            const number = parseInt(action.target.split('_')[1]);
-            const element = this.numberedElements.get(number);
-            if (element) {
-                console.log(`Found numbered element ${number}:`, element);
-                return element;
-            } else {
-                console.warn(`Numbered element ${number} not found. Available numbers:`, Array.from(this.numberedElements.keys()));
-                console.warn('Full numbered elements map:', this.numberedElements);
+                if (element && this.isElementInteractable(element)) {
+                    console.log('Found element by validated selector:', element);
+                    return element;
+                }
+            } catch (e) {
+                console.warn('Validated selector failed:', e);
             }
         }
-        
-        // Strategy 4: Find by text content
-        if (action.target) {
-            const elements = document.querySelectorAll('button, input, textarea, select, a');
-            for (let element of elements) {
-                const text = this.getElementText(element).toLowerCase();
-                if (text.includes(action.target.toLowerCase())) {
+
+        // Strategy 3: Use original selector with improved error handling
+        if (action.selector) {
+            try {
+                // Clean up the selector to avoid common issues
+                let cleanSelector = action.selector;
+
+                // Handle data attributes with special characters
+                if (cleanSelector.includes('[data-number=')) {
+                    const numberMatch = cleanSelector.match(/\[data-number=['"](\d+)['"]\]/);
+                    if (numberMatch) {
+                        const number = parseInt(numberMatch[1]);
+                        const element = this.numberedElements.get(number);
+                        if (element && this.isElementInteractable(element)) {
+                            console.log(`Found element by number reference in selector:`, element);
+                            return element;
+                        }
+                    }
+                }
+
+                const element = document.querySelector(cleanSelector);
+                if (element && this.isElementInteractable(element)) {
+                    console.log('Found element by selector:', element);
                     return element;
+                }
+            } catch (e) {
+                console.warn('Selector failed:', cleanSelector, e);
+            }
+        }
+
+        // Strategy 4: Find by coordinates if available
+        if (action.coordinates && action.coordinates.x !== undefined && action.coordinates.y !== undefined) {
+            try {
+                const elements = document.elementsFromPoint(action.coordinates.x, action.coordinates.y);
+                for (let element of elements) {
+                    if (this.isElementInteractable(element)) {
+                        console.log('Found element by coordinates:', element);
+                        return element;
+                    }
+                }
+            } catch (e) {
+                console.warn('Coordinate-based finding failed:', e);
+            }
+        }
+
+        // Strategy 5: Enhanced text content search
+        if (action.target && typeof action.target === 'string' && !action.target.startsWith('number_')) {
+            const searchText = action.target.toLowerCase();
+            const selectors = [
+                'button', 'input[type="button"]', 'input[type="submit"]',
+                'a[href]', '[role="button"]', '[onclick]',
+                '.btn', '.button', '[data-action]'
+            ];
+
+            for (let selector of selectors) {
+                try {
+                    const elements = document.querySelectorAll(selector);
+                    for (let element of elements) {
+                        const text = this.getElementText(element).toLowerCase();
+                        if (text.includes(searchText) && this.isElementInteractable(element)) {
+                            console.log('Found element by text content:', element);
+                            return element;
+                        }
+                    }
+                } catch (e) {
+                    console.warn(`Selector ${selector} failed:`, e);
                 }
             }
         }
-        
+
+        console.error('Could not find target element for action:', action);
         return null;
+    }
+
+    isElementInteractable(element) {
+        if (!element || !element.getBoundingClientRect) return false;
+
+        try {
+            const rect = element.getBoundingClientRect();
+            const style = window.getComputedStyle(element);
+
+            // Check if element is visible and has area
+            const isVisible = (
+                style.display !== 'none' &&
+                style.visibility !== 'hidden' &&
+                parseFloat(style.opacity) > 0 &&
+                rect.width > 0 &&
+                rect.height > 0
+            );
+
+            // Check if element is in viewport or scrollable into view
+            const isInViewport = (
+                rect.top < window.innerHeight + 1000 && // Allow some margin for scrolling
+                rect.bottom > -1000 &&
+                rect.left < window.innerWidth + 1000 &&
+                rect.right > -1000
+            );
+
+            // Check if element is not disabled
+            const isEnabled = !element.disabled && !element.hasAttribute('disabled');
+
+            return isVisible && isInViewport && isEnabled;
+        } catch (e) {
+            console.warn('Error checking element interactability:', e);
+            return false;
+        }
     }
     
     highlightElement(element) {
+        // Add CSS styles for highlighting if not already added
+        if (!document.querySelector('#vf-highlight-styles')) {
+            const style = document.createElement('style');
+            style.id = 'vf-highlight-styles';
+            style.textContent = `
+                .vf-highlighted {
+                    outline: 3px solid #ff4444 !important;
+                    outline-offset: 2px !important;
+                    background-color: rgba(255, 68, 68, 0.1) !important;
+                    transition: all 0.2s ease !important;
+                    position: relative !important;
+                    z-index: 999999 !important;
+                }
+
+                .vf-highlighted::before {
+                    content: "CLICKING...";
+                    position: absolute !important;
+                    top: -25px !important;
+                    left: 0 !important;
+                    background: #ff4444 !important;
+                    color: white !important;
+                    padding: 2px 8px !important;
+                    font-size: 11px !important;
+                    font-weight: bold !important;
+                    border-radius: 3px !important;
+                    z-index: 1000000 !important;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+                }
+
+                .vf-numbers-active {
+                    /* Ensure numbers stay visible during interactions */
+                }
+            `;
+            document.head.appendChild(style);
+        }
+
         // Add temporary highlight
         element.classList.add('vf-highlighted');
+
+        // Ensure element stays highlighted during the interaction
         setTimeout(() => {
-            element.classList.remove('vf-highlighted');
-        }, 1000);
+            if (element.classList.contains('vf-highlighted')) {
+                element.classList.remove('vf-highlighted');
+            }
+        }, 2000); // Longer timeout to see the action
     }
     
     wait(ms) {
