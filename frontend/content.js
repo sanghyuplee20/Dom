@@ -101,8 +101,8 @@ class VoiceForwardContent {
                     height: window.innerHeight
                 },
                 scroll_position: {
-                    x: window.scrollX,
-                    y: window.scrollY
+                    x: Math.round(window.scrollX),
+                    y: Math.round(window.scrollY)
                 }
             };
         } catch (error) {
