@@ -13,9 +13,13 @@ class DOMElement(BaseModel):
     attributes: Dict[str, Any] = Field(default_factory=dict)
     selector: Optional[str] = ""
     xpath: Optional[str] = ""
-    position: Optional[Dict[str, float]] = Field(default_factory=dict)  # {x, y, width, height}
+    position: Optional[Dict[str, Any]] = Field(default_factory=dict)  # Enhanced position data with center_x, center_y
     is_visible: bool = True
-    is_interactive: bool = False
+    is_interactive: Union[bool, str] = False  # Can be bool or string like "high", "medium", "low"
+
+    # New enhanced fields from frontend improvements
+    semantic_info: Optional[Dict[str, Any]] = Field(default_factory=dict)  # category, purpose, keywords
+    computed_styles: Optional[Dict[str, str]] = Field(default_factory=dict)  # cursor, pointer_events, etc.
 
     @validator('tag_name')
     def tag_name_must_be_lowercase(cls, v):
@@ -60,10 +64,14 @@ class Action(BaseModel):
     wait_time: float = Field(0.5, description="Time to wait after action (seconds)")
     sequence_order: int = Field(1, description="Order in action sequence")
     confidence: float = Field(0.8, description="Confidence score for this action")
+
+    # Additional fields that might be passed from validation/enhancement
+    validated_selector: Optional[str] = Field("", description="Validated CSS selector")
+    element_id: Optional[str] = Field("", description="Element ID reference")
     
     @validator('action')
     def action_must_be_valid(cls, v):
-        valid_actions = ['click', 'type', 'scroll', 'wait', 'navigate', 'hover', 'focus', 'switch_tab', 'create_tab', 'close_tab']
+        valid_actions = ['click', 'type', 'scroll', 'wait', 'navigate', 'hover', 'focus', 'switch_tab', 'create_tab', 'close_tab', 'hide_numbers']
         if v.lower() not in valid_actions:
             raise ValueError(f'Action must be one of: {valid_actions}')
         return v.lower()

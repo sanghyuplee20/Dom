@@ -121,7 +121,7 @@ class GeminiActionPlanner:
         """Initialize the Gemini LLM"""
         try:
             self.llm = ChatGoogleGenerativeAI(
-                model="gemini-2.5-flash",
+                model="gemini-1.5-flash",
                 google_api_key=self.api_key,
                 temperature=0.1,
                 max_tokens=2000,
@@ -137,10 +137,10 @@ class GeminiActionPlanner:
         
         # Main action planning prompt
         self.action_planning_prompt = ChatPromptTemplate.from_template("""
-You are a web automation expert. Convert voice commands into structured web actions.
+You are a web automation expert specializing in voice command interpretation. Convert natural language voice commands into structured web actions.
 
 AVAILABLE ACTIONS:
-1. click - Click an element (requires target description or selector)
+1. click - Click an element (requires target description)
 2. type - Type text into an input field (requires text and target)
 3. scroll - Scroll the page (requires direction: up/down and optional amount)
 4. wait - Wait for a specified duration (requires duration in seconds)
@@ -154,75 +154,100 @@ AVAILABLE ACTIONS:
 CURRENT PAGE CONTEXT:
 URL: {url}
 Title: {title}
-Available Interactive Elements:
+Available Interactive Elements (first 50 of potentially hundreds):
 {elements_summary}
 
 USER VOICE COMMAND: "{voice_command}"
 
-INSTRUCTIONS:
-1. Analyze the voice command and break it into specific, actionable steps
-2. Use the available page elements to create precise selectors
-3. Return a JSON array of actions in execution order
-4. Include confidence scores (0.0-1.0) for each action
-5. Be specific with target descriptions
+CRITICAL INSTRUCTIONS FOR ELEMENT TARGETING:
+
+1. PRIORITIZE TEXT-BASED TARGETING: When a user says "click the Store button" or "click Store", use the EXACT text as the target.
+   - Good: {{"action": "click", "target": "Store", "confidence": 0.95}}
+   - Good: {{"action": "click", "target": "Store button", "confidence": 0.95}}
+   - Bad: {{"action": "click", "selector": "button[type='button']", "confidence": 0.5}}
+
+2. USE DESCRIPTIVE TARGETS: Always describe what the user wants to click using their exact words.
+   - If they say "click the login button" → target: "login button"
+   - If they say "click Store" → target: "Store"
+   - If they say "click the red buy now button" → target: "red buy now button"
+
+3. SEMANTIC UNDERSTANDING: Understand that elements can be clickable even if they're not traditional buttons:
+   - Video thumbnails, product cards, navigation links, menu items
+   - Divs and spans with text content are often clickable in modern web apps
+   - Look for elements with interactive text content matching the user's request
+
+4. ELEMENT CONTEXT ANALYSIS: Use the provided element information to understand:
+   - Elements with "interactivity": "high" are very likely clickable
+   - Elements with "semantic_category": "navigation" are menu/nav items
+   - Elements with "semantic_category": "ecommerce" are shopping-related
+   - Elements with "content_hints" containing "user_intent_match" are high-value targets
+
+5. AVOID GENERIC SELECTORS: Don't use generic CSS selectors. The frontend has advanced semantic matching.
+   - Avoid: "button", "div", "a[href]", ".btn"
+   - Use: Descriptive text-based targets that match user intent
+
+6. CONFIDENCE SCORING:
+   - 0.9-1.0: Exact text match found in elements
+   - 0.7-0.9: Similar/related text found
+   - 0.5-0.7: Semantic match based on context
+   - 0.3-0.5: Generic fallback
 
 RESPONSE FORMAT (JSON only):
 [
   {{
     "action": "click",
-    "target": "search input field",
-    "selector": "input[type='search']",
-    "confidence": 0.9
-  }},
-  {{
-    "action": "type",
-    "text": "machine learning",
-    "target": "search input field",
-    "selector": "input[type='search']",
+    "target": "Store",
     "confidence": 0.95
   }}
 ]
 
-EXAMPLES:
+EXAMPLES - USING SEMANTIC TEXT MATCHING:
+
+Voice: "click the Store button"
+[
+  {{"action": "click", "target": "Store", "confidence": 0.95}}
+]
+
+Voice: "click Store"
+[
+  {{"action": "click", "target": "Store", "confidence": 0.95}}
+]
+
+Voice: "click on login"
+[
+  {{"action": "click", "target": "login", "confidence": 0.9}}
+]
 
 Voice: "search for wireless headphones"
 [
-  {{"action": "click", "target": "search box", "selector": "input[type='search'], input[name='search'], input[placeholder*='search']", "confidence": 0.9}},
-  {{"action": "type", "text": "wireless headphones", "target": "search box", "confidence": 0.95}},
-  {{"action": "click", "target": "search button", "selector": "button[type='submit'], input[type='submit'], button:contains('Search')", "confidence": 0.85}}
+  {{"action": "click", "target": "search", "confidence": 0.9}},
+  {{"action": "type", "text": "wireless headphones", "target": "search", "confidence": 0.95}},
+  {{"action": "click", "target": "search button", "confidence": 0.85}}
 ]
 
-Voice: "scroll down and click the first article"
+Voice: "click the first video"
 [
-  {{"action": "scroll", "direction": "down", "amount": 300, "confidence": 1.0}},
-  {{"action": "wait", "duration": 1, "confidence": 1.0}},
-  {{"action": "click", "target": "first article link", "selector": "article:first-child a, .article:first a, h2:first a", "confidence": 0.8}}
+  {{"action": "click", "target": "first video", "confidence": 0.8}}
 ]
 
-Voice: "scroll up"
+Voice: "add to cart"
 [
-  {{"action": "scroll", "direction": "up", "amount": 300, "confidence": 1.0}}
+  {{"action": "click", "target": "add to cart", "confidence": 0.9}}
 ]
 
-Voice: "fill out the contact form with my email"
+Voice: "scroll down"
 [
-  {{"action": "click", "target": "email input", "selector": "input[type='email'], input[name*='email']", "confidence": 0.9}},
-  {{"action": "type", "text": "user@example.com", "target": "email field", "confidence": 0.85}}
+  {{"action": "scroll", "direction": "down", "amount": 300, "confidence": 1.0}}
 ]
 
-Voice: "open new tab"
+Voice: "subscribe to this channel"
 [
-  {{"action": "create_tab", "target": "browser", "confidence": 1.0}}
+  {{"action": "click", "target": "subscribe", "confidence": 0.9}}
 ]
 
-Voice: "switch to next tab"
+Voice: "click the menu button"
 [
-  {{"action": "switch_tab", "direction": "next", "target": "browser", "confidence": 1.0}}
-]
-
-Voice: "close current tab"
-[
-  {{"action": "close_tab", "target": "browser", "confidence": 1.0}}
+  {{"action": "click", "target": "menu", "confidence": 0.9}}
 ]
 
 Return ONLY the JSON array, no additional text:
@@ -501,7 +526,7 @@ Return ONLY the normalized URL as a string.
         elements = page_context.get("elements", [])
         summary_parts = []
         
-        for element in elements[:10]:  # Limit to first 10 elements
+        for element in elements[:50]:  # Increased from 10 to 50 elements for much better AI context
             tag = element.get("tag_name", "")
             text = element.get("text_content", "")[:50]
             attrs = element.get("attributes", {})

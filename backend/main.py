@@ -11,6 +11,10 @@ import logging
 import os
 from datetime import datetime
 import uuid
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from fastapi.exceptions import RequestValidationError
+from starlette.responses import JSONResponse
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -48,6 +52,41 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class LogRequestBodyMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        try:
+            body = await request.body()
+        except Exception:
+            body = b""
+
+        # Preserve for later (e.g., in exception handlers)
+        request.state.body = body
+        request.state.content_type = request.headers.get("content-type")
+
+        # Reconstruct request so downstream can still read the body
+        async def receive():
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        request = Request(request.scope, receive)
+        response = await call_next(request)
+        return response
+
+app.add_middleware(LogRequestBodyMiddleware)
+
+# Log details for Pydantic/validation errors (422)
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    body_preview = getattr(request.state, "body", b"")[:1000]
+    content_type = getattr(request.state, "content_type", None)
+    try:
+        body_text = body_preview.decode(errors="replace")
+    except Exception:
+        body_text = str(body_preview)
+    logger.error(
+        f"422 validation error at {request.url.path} ct={content_type} body={body_text} errors={exc.errors()}"
+    )
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 # Initialize core components
 gemini_planner = GeminiActionPlanner(api_key=os.getenv("GEMINI_API_KEY"))
@@ -214,12 +253,24 @@ async def filter_important_elements(elements: List[DOMElement], page_url: str, u
         for i, element in enumerate(elements):
             attrs = element.attributes or {}
             full_text = (element.text_content or "").strip()
+            # Safely access new enhanced fields with fallbacks
+            position = getattr(element, 'position', {}) or {}
+            semantic_info = getattr(element, 'semantic_info', {}) or {}
+            is_interactive = getattr(element, 'is_interactive', 'unknown')
 
             element_info = {
                 "index": i,
                 "tag": element.tag_name,
-                "text": full_text[:200],  # Increased text length for better context
+                "text": full_text[:300],  # Increased from 200 to 300 for better context
                 "full_text_length": len(full_text),
+                "position": {
+                    "x": position.get("x", 0) if isinstance(position, dict) else 0,
+                    "y": position.get("y", 0) if isinstance(position, dict) else 0,
+                    "width": position.get("width", 0) if isinstance(position, dict) else 0,
+                    "height": position.get("height", 0) if isinstance(position, dict) else 0,
+                    "center_x": position.get("center_x", 0) if isinstance(position, dict) else 0,
+                    "center_y": position.get("center_y", 0) if isinstance(position, dict) else 0
+                },
                 "attributes": {
                     "class": attrs.get("class", ""),
                     "id": attrs.get("id", ""),
@@ -230,17 +281,40 @@ async def filter_important_elements(elements: List[DOMElement], page_url: str, u
                     "title": attrs.get("title", ""),
                     "data-testid": attrs.get("data-testid", ""),
                     "placeholder": attrs.get("placeholder", ""),
+                    # Enhanced attributes for better matching
+                    "name": attrs.get("name", ""),
+                    "value": attrs.get("value", ""),
                     # YouTube and video-specific attributes
                     "itemprop": attrs.get("itemprop", ""),
                     "data-context-item-id": attrs.get("data-context-item-id", ""),
                     "data-video-id": attrs.get("data-video-id", ""),
-                    "style": attrs.get("style", "")[:100] if attrs.get("style") else ""
+                    "data-action": attrs.get("data-action", ""),
+                    "data-click": attrs.get("data-click", ""),
+                    "data-href": attrs.get("data-href", ""),
+                    "onclick": attrs.get("onclick", ""),
+                    "style": attrs.get("style", "")[:150] if attrs.get("style") else ""
                 },
-                # Additional context for better decision making
+                # Enhanced context for better decision making
+                "interactivity": is_interactive,
+                "semantic_category": semantic_info.get("category", "unknown") if isinstance(semantic_info, dict) else "unknown",
+                "semantic_purpose": semantic_info.get("purpose", "unknown") if isinstance(semantic_info, dict) else "unknown",
+                "semantic_keywords": semantic_info.get("keywords", []) if isinstance(semantic_info, dict) else [],
                 "has_youtube_patterns": any(pattern in attrs.get("class", "").lower()
                                           for pattern in ["ytd-", "yt-", "video", "thumbnail"]),
                 "has_href": bool(attrs.get("href")),
-                "text_length": len(full_text)
+                "text_length": len(full_text),
+                "has_click_handler": bool(attrs.get("onclick") or
+                                        attrs.get("data-click") or
+                                        attrs.get("data-action")),
+                # Context clues for better element identification
+                "likely_clickable": (
+                    element.tag_name.lower() in ['button', 'a', 'input'] or
+                    bool(attrs.get("role") in ['button', 'link', 'menuitem']) or
+                    bool(attrs.get("onclick")) or
+                    any(cls in attrs.get("class", "").lower()
+                        for cls in ["btn", "button", "click", "link", "nav", "menu"])
+                ),
+                "content_hints": _extract_content_hints(full_text, attrs)
             }
             element_data.append(element_info)
 
@@ -1047,6 +1121,57 @@ def is_interactive_element(element: DOMElement) -> bool:
 
     return False
 
+def _extract_content_hints(text_content: str, attributes: dict) -> dict:
+    """Extract semantic hints from element text and attributes for better AI understanding"""
+    hints = {
+        "action_words": [],
+        "navigation_indicators": [],
+        "content_type": "unknown",
+        "user_intent_match": []
+    }
+
+    text = text_content.lower() if text_content else ""
+    class_name = attributes.get("class", "").lower()
+    aria_label = attributes.get("aria-label", "").lower()
+    title = attributes.get("title", "").lower()
+
+    # Combine all text sources for analysis
+    all_text = f"{text} {class_name} {aria_label} {title}"
+
+    # Action words that indicate clickable elements
+    action_words = ["click", "tap", "press", "select", "choose", "buy", "purchase", "add", "remove",
+                   "delete", "edit", "view", "open", "close", "show", "hide", "expand", "collapse",
+                   "submit", "send", "search", "filter", "sort", "play", "pause", "start", "stop"]
+
+    hints["action_words"] = [word for word in action_words if word in all_text]
+
+    # Navigation indicators
+    nav_indicators = ["menu", "nav", "navigation", "home", "about", "contact", "services", "products",
+                     "store", "shop", "cart", "account", "profile", "settings", "help", "support"]
+
+    hints["navigation_indicators"] = [indicator for indicator in nav_indicators if indicator in all_text]
+
+    # Content type detection
+    if any(word in all_text for word in ["video", "play", "watch", "channel", "subscribe"]):
+        hints["content_type"] = "media"
+    elif any(word in all_text for word in ["buy", "purchase", "cart", "price", "order", "checkout"]):
+        hints["content_type"] = "ecommerce"
+    elif any(word in all_text for word in ["login", "signin", "signup", "register", "form"]):
+        hints["content_type"] = "auth"
+    elif any(word in all_text for word in ["search", "filter", "sort", "find"]):
+        hints["content_type"] = "search"
+    elif any(word in all_text for word in ["nav", "menu", "home", "about", "contact"]):
+        hints["content_type"] = "navigation"
+
+    # Common user intent words that might be spoken
+    intent_words = ["store", "shop", "buy", "cart", "menu", "search", "login", "signup", "home",
+                   "about", "contact", "help", "play", "video", "channel", "subscribe", "like",
+                   "share", "comment", "profile", "settings", "account"]
+
+    hints["user_intent_match"] = [word for word in intent_words if word in all_text]
+
+    return hints
+
 def generate_element_description(element: DOMElement) -> str:
     """
     Generate a human-readable description of an element
@@ -1085,6 +1210,8 @@ async def handle_action_planning(request: CommandRequest) -> ActionSequenceRespo
     """
     try:
         logger.info(f"Starting action planning for: {request.query}")
+
+        logger.info(request.page_context.model_dump())
         
         # Step 1: Plan actions using Gemini
         planned_actions = await gemini_planner.plan_actions(
