@@ -1184,8 +1184,34 @@ class VoiceForwardContent {
 
             // If not activated yet, check for wake word
             if (!this.isActivated) {
-                const wakeWordVariations = ['hey dom', 'hey don', 'a dom', 'hey dumb', 'hey tom'];
-                const detectedWakeWord = wakeWordVariations.find(variation => fullTranscript.includes(variation));
+                const wakeWordVariations = [
+                    'hey dom', 'hey don', 'a dom', 'hey dumb', 'hey tom',
+                    'hey dom', 'hey down', 'hey dawn', 'hey done', 'hey damn',
+                    'a don', 'a tom', 'a done', 'aide on', 'hey damn',
+                    'hey deem', 'hey dim', 'hay dom', 'hey doom', 'hey dom',
+                    'hey dom', 'hey dom', 'hey dom', 'hey dom', 'hey dom',
+                    'dom', 'don', 'tom', 'dumb', 'dawn'  // Even more lenient - just the name variations
+                ];
+
+                // More flexible matching - check if any variation is contained or sounds similar
+                const detectedWakeWord = wakeWordVariations.find(variation => {
+                    // Direct contains check
+                    if (fullTranscript.includes(variation)) return true;
+
+                    // Fuzzy matching for single word variations
+                    if (variation.length <= 4) {  // For short words like 'dom', 'don', etc.
+                        const words = fullTranscript.split(' ');
+                        return words.some(word => {
+                            // Check if word starts with variation (partial match)
+                            if (word.startsWith(variation)) return true;
+                            // Check if variation starts with word (truncated speech)
+                            if (variation.startsWith(word) && word.length >= 2) return true;
+                            return false;
+                        });
+                    }
+
+                    return false;
+                });
 
                 if (detectedWakeWord) {
                     console.log('Wake word detected - activating persistent recording mode');
