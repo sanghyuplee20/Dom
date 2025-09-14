@@ -113,87 +113,162 @@ class VoiceForwardContent {
     
     analyzeDOM() {
         const elements = [];
-        
-        // SIMPLIFIED APPROACH: Cast a wider net and let the backend filter
+
+        // ENHANCED APPROACH: Cast a much wider net with semantic understanding
         const interactiveSelectors = [
             // Standard interactive elements
-            'button', 'input', 'textarea', 'select', 'a',
+            'button', 'input', 'textarea', 'select', 'a', 'summary', 'details',
 
-            // Role-based elements
+            // Role-based elements (comprehensive list)
             '[role="button"]', '[role="link"]', '[role="tab"]', '[role="menuitem"]',
+            '[role="option"]', '[role="checkbox"]', '[role="radio"]', '[role="slider"]',
+            '[role="switch"]', '[role="textbox"]', '[role="combobox"]', '[role="searchbox"]',
 
-            // Common interactive classes
-            '[class*="btn"]', '[class*="button"]', '[class*="link"]',
-            '[class*="clickable"]', '[class*="interactive"]',
+            // Common interactive classes (expanded)
+            '[class*="btn"]', '[class*="button"]', '[class*="link"]', '[class*="nav"]',
+            '[class*="clickable"]', '[class*="interactive"]', '[class*="menu"]',
+            '[class*="dropdown"]', '[class*="toggle"]', '[class*="tab"]',
 
-            // Content containers that might be clickable
+            // Content containers that might be clickable (expanded)
             '[class*="card"]', '[class*="tile"]', '[class*="item"]', '[class*="entry"]',
+            '[class*="post"]', '[class*="article"]', '[class*="content"]', '[class*="box"]',
+            '[class*="container"]', '[class*="wrapper"]', '[class*="panel"]',
+
+            // Video/Media specific (important for YouTube, etc.)
+            '[class*="video"]', '[class*="media"]', '[class*="player"]', '[class*="thumbnail"]',
+            '[class*="watch"]', '[class*="play"]', '[class*="channel"]', '[class*="playlist"]',
+
+            // E-commerce specific
+            '[class*="product"]', '[class*="cart"]', '[class*="buy"]', '[class*="purchase"]',
+            '[class*="shop"]', '[class*="store"]', '[class*="price"]', '[class*="add-to"]',
+
+            // Social media specific
+            '[class*="share"]', '[class*="like"]', '[class*="follow"]', '[class*="comment"]',
+            '[class*="post"]', '[class*="tweet"]', '[class*="message"]',
 
             // Elements with click handlers
-            '[onclick]', '[onmousedown]', '[onmouseup]',
+            '[onclick]', '[onmousedown]', '[onmouseup]', '[onchange]',
 
             // Elements with tabindex (focusable)
-            '[tabindex]',
+            '[tabindex]:not([tabindex="-1"])',
 
-            // Data attributes suggesting interactivity
-            '[data-click]', '[data-action]', '[data-href]', '[data-url]',
+            // Data attributes suggesting interactivity (expanded)
+            '[data-click]', '[data-action]', '[data-href]', '[data-url]', '[data-target]',
+            '[data-toggle]', '[data-dismiss]', '[data-slide]', '[data-tab]',
+            '[data-video-id]', '[data-testid]', '[data-test]',
 
             // Cursor pointer elements
-            '[style*="cursor"]'
+            '[style*="cursor: pointer"]', '[style*="cursor:pointer"]',
+
+            // Form elements
+            'form', 'fieldset', 'legend', 'label',
+
+            // List items that might be clickable
+            'li[class]', 'li[onclick]', 'li[data-]',
+
+            // Divs and spans with interactive indicators
+            'div[onclick]', 'div[class*="click"]', 'div[class*="btn"]', 'div[class*="button"]',
+            'span[onclick]', 'span[class*="click"]', 'span[class*="btn"]', 'span[class*="button"]',
+
+            // Headers that might be clickable (accordions, etc.)
+            'h1[onclick]', 'h2[onclick]', 'h3[onclick]', 'h4[onclick]', 'h5[onclick]', 'h6[onclick]',
+            'h1[class*="toggle"]', 'h2[class*="toggle"]', 'h3[class*="toggle"]'
         ];
-        
-        // Find all interactive elements
+
+        // Find all potentially interactive elements
         const foundElements = document.querySelectorAll(interactiveSelectors.join(', '));
-        
-        foundElements.forEach((element, index) => {
-            // Check if element is visible
+
+        // Also add elements that might be interactive based on text content
+        const allElements = document.querySelectorAll('*');
+        const interactiveKeywords = [
+            'click', 'button', 'link', 'menu', 'nav', 'tab', 'toggle', 'expand', 'collapse',
+            'show', 'hide', 'open', 'close', 'play', 'pause', 'start', 'stop',
+            'buy', 'purchase', 'cart', 'checkout', 'order', 'shop', 'store',
+            'login', 'signin', 'signup', 'register', 'subscribe', 'follow',
+            'search', 'filter', 'sort', 'view', 'more', 'less', 'next', 'prev',
+            'submit', 'send', 'post', 'share', 'like', 'comment', 'reply'
+        ];
+
+        // Combine both approaches
+        const combinedElements = new Set([...foundElements]);
+
+        // Add elements with interactive text content
+        allElements.forEach(element => {
+            const text = this.getElementText(element).toLowerCase();
+            const hasInteractiveText = interactiveKeywords.some(keyword => text.includes(keyword));
+
+            if (hasInteractiveText && text.length > 2 && text.length < 100) {
+                combinedElements.add(element);
+            }
+        });
+
+        Array.from(combinedElements).forEach((element, index) => {
+            // More lenient visibility check
             const rect = element.getBoundingClientRect();
             const style = window.getComputedStyle(element);
-            
+
+            // Less restrictive visibility check - focus on truly hidden elements
             const isVisible = (
                 style.display !== 'none' &&
                 style.visibility !== 'hidden' &&
-                style.opacity !== '0' &&
-                rect.width > 0 &&
-                rect.height > 0 &&
-                rect.top < window.innerHeight &&
-                rect.bottom > 0
+                parseFloat(style.opacity) > 0.1 &&  // Allow very faded elements
+                rect.width > 2 &&  // Allow very small elements
+                rect.height > 2 &&
+                rect.top < window.innerHeight + 100 &&  // Allow elements slightly below fold
+                rect.bottom > -100  // Allow elements slightly above fold
             );
-            
+
             if (isVisible) {
                 const selector = this.generateSelector(element);
+                const textContent = this.getElementText(element);
+
                 const elementData = {
                     tag_name: element.tagName.toLowerCase(),
-                    text_content: this.getElementText(element),
+                    text_content: textContent,
                     attributes: this.getElementAttributes(element),
                     selector: selector,
                     xpath: this.generateXPath(element),
                     position: {
-                        x: rect.left,
-                        y: rect.top,
-                        width: rect.width,
-                        height: rect.height
+                        x: Math.round(rect.left),
+                        y: Math.round(rect.top),
+                        width: Math.round(rect.width),
+                        height: Math.round(rect.height),
+                        center_x: Math.round(rect.left + rect.width / 2),
+                        center_y: Math.round(rect.top + rect.height / 2)
                     },
                     is_visible: true,
-                    is_interactive: true
+                    is_interactive: this.determineInteractivity(element),
+                    semantic_info: this.extractSemanticInfo(element, textContent),
+                    computed_styles: {
+                        cursor: style.cursor,
+                        pointer_events: style.pointerEvents,
+                        user_select: style.userSelect
+                    }
                 };
-
-                // DEBUG: Log selector for video elements
-                if (selector.includes('lockup') || selector.includes('video')) {
-                    console.log(`DEBUG: Video element selector: ${selector}`);
-                }
 
                 elements.push(elementData);
             }
         });
-        
-        console.log(`Found ${elements.length} interactive elements`);
 
-        // DEBUG: Log first few elements if we found very few
-        if (elements.length < 10) {
-            console.log('DEBUG: Few elements found, logging details:');
-            elements.slice(0, 5).forEach((el, i) => {
-                console.log(`Element ${i}:`, el.tag_name, el.attributes.class, el.text_content?.substring(0, 50));
+        // Sort elements by position (top to bottom, left to right) for better AI understanding
+        elements.sort((a, b) => {
+            const yDiff = a.position.y - b.position.y;
+            return Math.abs(yDiff) < 50 ? a.position.x - b.position.x : yDiff;
+        });
+
+        console.log(`Enhanced analysis found ${elements.length} potentially interactive elements`);
+
+        // Enhanced debugging for low element count
+        if (elements.length < 20) {
+            console.log('DEBUG: Few elements found, showing enhanced details:');
+            elements.slice(0, 10).forEach((el, i) => {
+                console.log(`Element ${i}:`, {
+                    tag: el.tag_name,
+                    text: el.text_content?.substring(0, 50),
+                    classes: el.attributes.class,
+                    interactive: el.is_interactive,
+                    semantic: el.semantic_info
+                });
             });
         }
 
@@ -332,7 +407,112 @@ class VoiceForwardContent {
         
         return path;
     }
-    
+
+    determineInteractivity(element) {
+        // Enhanced interactivity detection
+        const tagName = element.tagName.toLowerCase();
+        const style = window.getComputedStyle(element);
+        const attributes = element.attributes || {};
+        const classList = element.classList || [];
+
+        // High confidence interactive elements
+        if (['button', 'input', 'select', 'textarea', 'a'].includes(tagName)) {
+            return 'high';
+        }
+
+        // Role-based interactivity
+        const role = element.getAttribute('role');
+        if (['button', 'link', 'tab', 'menuitem', 'option'].includes(role)) {
+            return 'high';
+        }
+
+        // Event handlers indicate interactivity
+        if (element.onclick || element.onmousedown || element.getAttribute('onclick')) {
+            return 'high';
+        }
+
+        // CSS cursor indicates clickable
+        if (style.cursor === 'pointer') {
+            return 'medium';
+        }
+
+        // Class names suggest interactivity
+        const interactiveClasses = ['btn', 'button', 'click', 'link', 'nav', 'menu', 'tab', 'toggle'];
+        const hasInteractiveClass = interactiveClasses.some(cls =>
+            Array.from(classList).some(className => className.toLowerCase().includes(cls))
+        );
+        if (hasInteractiveClass) {
+            return 'medium';
+        }
+
+        // Data attributes suggest interactivity
+        const interactiveDataAttrs = ['data-click', 'data-action', 'data-href', 'data-toggle', 'data-target'];
+        const hasInteractiveDataAttr = interactiveDataAttrs.some(attr => element.hasAttribute(attr));
+        if (hasInteractiveDataAttr) {
+            return 'medium';
+        }
+
+        return 'low';
+    }
+
+    extractSemanticInfo(element, textContent) {
+        const semanticInfo = {
+            category: 'unknown',
+            purpose: 'unknown',
+            keywords: []
+        };
+
+        const text = textContent.toLowerCase();
+        const tagName = element.tagName.toLowerCase();
+        const className = (element.className || '').toLowerCase();
+        const role = (element.getAttribute('role') || '').toLowerCase();
+
+        // Navigation elements
+        if (text.includes('nav') || className.includes('nav') || role.includes('nav') ||
+            ['home', 'menu', 'about', 'contact', 'services', 'products'].some(word => text.includes(word))) {
+            semanticInfo.category = 'navigation';
+            semanticInfo.purpose = 'navigate';
+        }
+
+        // E-commerce elements
+        else if (['buy', 'purchase', 'cart', 'checkout', 'order', 'shop', 'store', 'price', 'add to cart'].some(word => text.includes(word))) {
+            semanticInfo.category = 'ecommerce';
+            semanticInfo.purpose = 'purchase';
+        }
+
+        // Media/Video elements
+        else if (['play', 'pause', 'video', 'watch', 'channel', 'playlist', 'subscribe'].some(word => text.includes(word)) ||
+                 className.includes('video') || className.includes('media') || className.includes('player')) {
+            semanticInfo.category = 'media';
+            semanticInfo.purpose = 'media_control';
+        }
+
+        // Social elements
+        else if (['like', 'share', 'follow', 'comment', 'post', 'tweet', 'message'].some(word => text.includes(word))) {
+            semanticInfo.category = 'social';
+            semanticInfo.purpose = 'social_interaction';
+        }
+
+        // Form elements
+        else if (tagName === 'input' || tagName === 'textarea' || tagName === 'select' ||
+                 ['login', 'signin', 'signup', 'register', 'submit', 'send', 'search'].some(word => text.includes(word))) {
+            semanticInfo.category = 'form';
+            semanticInfo.purpose = 'input';
+        }
+
+        // Control elements
+        else if (['show', 'hide', 'expand', 'collapse', 'toggle', 'open', 'close', 'more', 'less'].some(word => text.includes(word))) {
+            semanticInfo.category = 'control';
+            semanticInfo.purpose = 'toggle_visibility';
+        }
+
+        // Extract important keywords for matching
+        const importantWords = textContent.split(/\s+/).filter(word => word.length > 2);
+        semanticInfo.keywords = importantWords.slice(0, 5); // Limit to 5 most important words
+
+        return semanticInfo;
+    }
+
     async executeResult(result) {
         console.log('Executing result:', result);
 
@@ -1026,33 +1206,409 @@ class VoiceForwardContent {
             }
         }
 
-        // Strategy 5: Enhanced text content search
+        // Strategy 5: Advanced semantic text matching
         if (action.target && typeof action.target === 'string' && !action.target.startsWith('number_')) {
-            const searchText = action.target.toLowerCase();
-            const selectors = [
-                'button', 'input[type="button"]', 'input[type="submit"]',
-                'a[href]', '[role="button"]', '[onclick]',
-                '.btn', '.button', '[data-action]'
-            ];
+            console.log('Attempting semantic text matching for target:', action.target);
+            const foundElement = this.findElementBySemanticMatch(action.target);
+            if (foundElement) {
+                console.log('Found element by semantic matching:', foundElement);
+                return foundElement;
+            }
+        }
 
-            for (let selector of selectors) {
-                try {
-                    const elements = document.querySelectorAll(selector);
-                    for (let element of elements) {
-                        const text = this.getElementText(element).toLowerCase();
-                        if (text.includes(searchText) && this.isElementInteractable(element)) {
-                            console.log('Found element by text content:', element);
-                            return element;
-                        }
-                    }
-                } catch (e) {
-                    console.warn(`Selector ${selector} failed:`, e);
-                }
+        // Strategy 6: Fallback text search in all elements
+        if (action.target && typeof action.target === 'string' && !action.target.startsWith('number_')) {
+            console.log('Attempting fallback text search for target:', action.target);
+            const foundElement = this.findElementByFallbackTextSearch(action.target);
+            if (foundElement) {
+                console.log('Found element by fallback text search:', foundElement);
+                return foundElement;
             }
         }
 
         console.error('Could not find target element for action:', action);
         return null;
+    }
+
+    findElementBySemanticMatch(targetDescription) {
+        const searchTerms = targetDescription.toLowerCase().split(/\s+/);
+        console.log('Searching for semantic match with terms:', searchTerms);
+
+        // SPECIAL CASE: Search input detection
+        if (searchTerms.includes('search') || searchTerms.includes('find')) {
+            console.log('Detected search intent, trying specialized search input finder');
+            const searchInput = this.findSearchInput();
+            if (searchInput) {
+                console.log('Found search input via specialized finder:', searchInput);
+                return searchInput;
+            }
+        }
+
+        // SPECIAL CASE: Enter/Submit button detection
+        if (searchTerms.includes('enter') || searchTerms.includes('submit') || searchTerms.includes('go')) {
+            console.log('Detected enter/submit intent, trying specialized submit finder');
+            const submitElement = this.findSubmitElement();
+            if (submitElement) {
+                console.log('Found submit element via specialized finder:', submitElement);
+                return submitElement;
+            }
+        }
+
+        // SPECIAL CASE: Input field detection for other common inputs
+        if (searchTerms.some(term => ['email', 'password', 'username', 'login', 'name', 'phone', 'address'].includes(term))) {
+            console.log('Detected input field intent, prioritizing input elements');
+            const inputSelectors = [
+                'input[type="text"]', 'input[type="email"]', 'input[type="password"]',
+                'input[type="search"]', 'input[type="tel"]', 'textarea',
+                'input:not([type])', '[contenteditable="true"]'
+            ];
+
+            let bestMatch = this.searchElementsBySelectors(inputSelectors, searchTerms, 0.5);
+            if (bestMatch) return bestMatch;
+        }
+
+        // High priority selectors for clickable elements (reordered based on context)
+        const prioritySelectors = searchTerms.includes('search') || searchTerms.includes('enter') || searchTerms.includes('submit') ?
+            // Prioritize buttons and submits for search/enter commands
+            [
+                'button', 'input[type="submit"]', 'input[type="button"]',
+                '[role="button"]', '[type="submit"]', 'a[href]',
+                '[role="link"]', '[role="menuitem"]', '[onclick]',
+                '.btn', '.button', '[data-action]', '[data-click]'
+            ] :
+            // Default priority for other commands
+            [
+                'button', 'input[type="button"]', 'input[type="submit"]', 'a[href]',
+                '[role="button"]', '[role="link"]', '[role="menuitem"]', '[onclick]',
+                '.btn', '.button', '[data-action]', '[data-click]'
+            ];
+
+        // Medium priority selectors
+        const mediumSelectors = [
+            'div[class*="btn"]', 'div[class*="button"]', 'div[class*="click"]',
+            'span[class*="btn"]', 'span[class*="button"]', 'span[class*="click"]',
+            'div[onclick]', 'span[onclick]', 'li[onclick]',
+            '[class*="nav"]', '[class*="menu"]', '[class*="tab"]'
+        ];
+
+        // Low priority selectors (broader search)
+        const broadSelectors = [
+            'div', 'span', 'li', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
+        ];
+
+        // Try high priority elements first
+        let bestMatch = this.searchElementsBySelectors(prioritySelectors, searchTerms, 0.8);
+        if (bestMatch) return bestMatch;
+
+        // Then medium priority
+        bestMatch = this.searchElementsBySelectors(mediumSelectors, searchTerms, 0.7);
+        if (bestMatch) return bestMatch;
+
+        // Finally broad search with stricter matching
+        bestMatch = this.searchElementsBySelectors(broadSelectors, searchTerms, 0.9);
+        if (bestMatch) return bestMatch;
+
+        return null;
+    }
+
+    findSearchInput() {
+        console.log('Looking for search input using specialized detection');
+
+        // High confidence search input selectors (in priority order)
+        const searchSelectors = [
+            'input[type="search"]',
+            'input[name*="search" i]',
+            'input[name*="query" i]',
+            'input[name="q"]',
+            'input[placeholder*="search" i]',
+            'input[aria-label*="search" i]',
+            'input[id*="search" i]',
+            'input[class*="search" i]',
+            // Amazon-specific
+            'input[name="field-keywords"]',
+            'input[data-testid*="search"]',
+            // Generic text inputs in search contexts
+            'form[role="search"] input[type="text"]',
+            'form[class*="search"] input[type="text"]',
+            'div[class*="search"] input[type="text"]',
+            '.search input[type="text"]',
+            '#search input[type="text"]'
+        ];
+
+        for (let selector of searchSelectors) {
+            try {
+                const elements = document.querySelectorAll(selector);
+                for (let element of elements) {
+                    if (this.isElementInteractable(element)) {
+                        console.log(`Found search input with selector: ${selector}`, element);
+                        return element;
+                    }
+                }
+            } catch (e) {
+                console.warn(`Search selector ${selector} failed:`, e);
+            }
+        }
+
+        // Fallback: Look for any text input that seems search-related
+        const allInputs = document.querySelectorAll('input[type="text"], input:not([type]), input[type="search"]');
+        for (let input of allInputs) {
+            if (!this.isElementInteractable(input)) continue;
+
+            const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
+            const name = (input.getAttribute('name') || '').toLowerCase();
+            const id = (input.getAttribute('id') || '').toLowerCase();
+            const ariaLabel = (input.getAttribute('aria-label') || '').toLowerCase();
+            const className = (input.className || '').toLowerCase();
+
+            const allText = `${placeholder} ${name} ${id} ${ariaLabel} ${className}`;
+
+            if (allText.includes('search') || allText.includes('find') || allText.includes('query') ||
+                name === 'q' || name === 's' || name.includes('keyword')) {
+                console.log('Found search input via fallback text analysis:', input);
+                return input;
+            }
+        }
+
+        console.log('No search input found with specialized detection');
+        return null;
+    }
+
+    findSubmitElement() {
+        console.log('Looking for submit element using specialized detection');
+
+        // High confidence submit element selectors (in priority order)
+        const submitSelectors = [
+            'input[type="submit"]',
+            'button[type="submit"]',
+            'button[name*="submit" i]',
+            'button[class*="submit" i]',
+            'input[value*="search" i][type="submit"]',
+            'input[value*="go" i][type="submit"]',
+            'button[class*="search" i]',
+            'button[id*="search" i]',
+            // Amazon-specific
+            'input[value="Go"]',
+            'input[class*="nav-search-submit"]',
+            'button[data-testid*="search"]',
+            '.search-button',
+            '#search-button',
+            // Generic search/submit buttons
+            'form[role="search"] button',
+            'form[class*="search"] button',
+            'div[class*="search"] button',
+            '.search button',
+            '#search button'
+        ];
+
+        for (let selector of submitSelectors) {
+            try {
+                const elements = document.querySelectorAll(selector);
+                for (let element of elements) {
+                    if (this.isElementInteractable(element)) {
+                        console.log(`Found submit element with selector: ${selector}`, element);
+                        return element;
+                    }
+                }
+            } catch (e) {
+                console.warn(`Submit selector ${selector} failed:`, e);
+            }
+        }
+
+        // Fallback: Look for buttons with submit-related text
+        const allButtons = document.querySelectorAll('button, input[type="button"], input[type="submit"]');
+        for (let button of allButtons) {
+            if (!this.isElementInteractable(button)) continue;
+
+            const text = this.getElementText(button).toLowerCase();
+            const value = (button.getAttribute('value') || '').toLowerCase();
+            const ariaLabel = (button.getAttribute('aria-label') || '').toLowerCase();
+            const title = (button.getAttribute('title') || '').toLowerCase();
+
+            const allText = `${text} ${value} ${ariaLabel} ${title}`;
+
+            if (allText.includes('search') || allText.includes('submit') || allText.includes('go') ||
+                allText.includes('find') || text === '🔍' || allText.includes('enter')) {
+                console.log('Found submit element via fallback text analysis:', button);
+                return button;
+            }
+        }
+
+        // Special case: If we find a search input, look for nearby submit elements
+        const searchInput = this.findSearchInput();
+        if (searchInput) {
+            console.log('Found search input, looking for nearby submit elements');
+
+            // Check for submit elements in the same form
+            const form = searchInput.closest('form');
+            if (form) {
+                const formSubmits = form.querySelectorAll('button, input[type="submit"], input[type="button"]');
+                for (let submit of formSubmits) {
+                    if (this.isElementInteractable(submit)) {
+                        console.log('Found submit element in same form as search input:', submit);
+                        return submit;
+                    }
+                }
+            }
+
+            // Check for submit elements in the same container
+            const container = searchInput.closest('div, section, header, nav');
+            if (container) {
+                const containerSubmits = container.querySelectorAll('button, input[type="submit"], input[type="button"]');
+                for (let submit of containerSubmits) {
+                    if (this.isElementInteractable(submit) && submit !== searchInput) {
+                        const rect1 = searchInput.getBoundingClientRect();
+                        const rect2 = submit.getBoundingClientRect();
+
+                        // Check if they're visually close (within 200px)
+                        if (Math.abs(rect1.top - rect2.top) < 200 && Math.abs(rect1.left - rect2.left) < 200) {
+                            console.log('Found submit element near search input:', submit);
+                            return submit;
+                        }
+                    }
+                }
+            }
+        }
+
+        console.log('No submit element found with specialized detection');
+        return null;
+    }
+
+    searchElementsBySelectors(selectors, searchTerms, minScore) {
+        let bestMatch = null;
+        let bestScore = minScore;
+
+        for (let selector of selectors) {
+            try {
+                const elements = document.querySelectorAll(selector);
+                for (let element of elements) {
+                    if (!this.isElementInteractable(element)) continue;
+
+                    const score = this.calculateSemanticScore(element, searchTerms);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestMatch = element;
+                        console.log(`New best match (score: ${score}):`, element, this.getElementText(element));
+                    }
+                }
+            } catch (e) {
+                console.warn(`Selector ${selector} failed:`, e);
+            }
+        }
+
+        return bestMatch;
+    }
+
+    calculateSemanticScore(element, searchTerms) {
+        let score = 0;
+
+        // Get all text sources including input-specific attributes
+        const elementText = this.getElementText(element).toLowerCase();
+        const className = (element.className || '').toLowerCase();
+        const ariaLabel = (element.getAttribute('aria-label') || '').toLowerCase();
+        const title = (element.getAttribute('title') || '').toLowerCase();
+        const placeholder = (element.getAttribute('placeholder') || '').toLowerCase();
+        const name = (element.getAttribute('name') || '').toLowerCase();
+        const type = (element.getAttribute('type') || '').toLowerCase();
+        const dataAction = (element.getAttribute('data-action') || '').toLowerCase();
+        const id = (element.getAttribute('id') || '').toLowerCase();
+
+        // Combine all text sources for comprehensive matching
+        const allText = `${elementText} ${className} ${ariaLabel} ${title} ${placeholder} ${name} ${type} ${dataAction} ${id}`;
+
+        const tagName = element.tagName.toLowerCase();
+        const searchString = searchTerms.join(' ');
+
+        // SPECIAL HANDLING FOR INPUT FIELDS
+        if (tagName === 'input' || tagName === 'textarea') {
+            // High priority for search-related inputs
+            if (searchTerms.includes('search') || searchTerms.includes('find')) {
+                if (type === 'search') score += 3.0;  // Perfect search input
+                if (placeholder.includes('search') || placeholder.includes('find')) score += 2.5;
+                if (name.includes('search') || name.includes('query') || name.includes('q')) score += 2.0;
+                if (ariaLabel.includes('search') || ariaLabel.includes('find')) score += 2.0;
+                if (className.includes('search') || id.includes('search')) score += 1.5;
+            }
+
+            // General input field bonuses
+            if (type === 'text' || type === 'search' || type === 'email' || type === 'tel') score += 1.0;
+
+            // Match against placeholder, name, and labels for inputs
+            for (let term of searchTerms) {
+                if (placeholder.includes(term)) score += 1.5;
+                if (name.includes(term)) score += 1.2;
+                if (ariaLabel.includes(term)) score += 1.2;
+                if (id.includes(term)) score += 1.0;
+            }
+
+            // Special bonus for common input patterns
+            if (searchTerms.some(term => ['email', 'password', 'login', 'username', 'name'].includes(term))) {
+                if (type.includes(searchTerms.find(t => ['email', 'password'].includes(t)))) score += 2.0;
+                if (name.includes(searchTerms.find(t => ['email', 'password', 'username', 'login'].includes(t)))) score += 1.5;
+            }
+        }
+
+        // BUTTON AND CLICKABLE ELEMENT SCORING
+        else {
+            // Check for exact matches (high score)
+            for (let term of searchTerms) {
+                if (elementText === term) score += 2.0;  // Perfect match
+                else if (elementText.includes(term)) score += 1.0;  // Contains term
+                else if (allText.includes(term)) score += 0.5;  // In attributes
+            }
+
+            // Check for partial matches
+            if (elementText.includes(searchString)) score += 1.5;  // Multi-word match
+            if (allText.includes(searchString)) score += 0.8;
+
+            // Bonus points for interactive elements
+            if (['button', 'a'].includes(tagName)) score += 0.3;
+            if (element.getAttribute('role') === 'button') score += 0.3;
+            if (element.onclick || element.getAttribute('onclick')) score += 0.2;
+            if (className.includes('btn') || className.includes('button')) score += 0.2;
+
+            // Special handling for "enter" or "submit" commands
+            if (searchTerms.includes('enter') || searchTerms.includes('submit') || searchTerms.includes('go')) {
+                if (type === 'submit' || tagName === 'button') score += 2.0;
+                if (elementText.includes('search') || elementText.includes('go') || elementText.includes('submit')) score += 1.5;
+                if (className.includes('submit') || className.includes('search-btn')) score += 1.2;
+            }
+        }
+
+        // Penalty for very long text (less likely to be a specific target)
+        if (elementText.length > 100) score -= 0.3;
+
+        // Bonus for elements that are clearly focusable/interactive
+        if (element.tabIndex >= 0) score += 0.2;
+        if (element.getAttribute('contenteditable') === 'true') score += 0.5;
+
+        return score;
+    }
+
+    findElementByFallbackTextSearch(targetDescription) {
+        const searchTerms = targetDescription.toLowerCase().split(/\s+/);
+        console.log('Fallback text search for terms:', searchTerms);
+
+        // Cast a very wide net for fallback
+        const allElements = document.querySelectorAll('*');
+        let bestMatch = null;
+        let bestScore = 0.3;  // Lower threshold for fallback
+
+        for (let element of allElements) {
+            if (!this.isElementInteractable(element)) continue;
+
+            // Skip elements that are too generic
+            const tagName = element.tagName.toLowerCase();
+            if (['html', 'body', 'head', 'script', 'style', 'meta', 'link'].includes(tagName)) continue;
+
+            const score = this.calculateSemanticScore(element, searchTerms);
+            if (score > bestScore) {
+                bestScore = score;
+                bestMatch = element;
+                console.log(`Fallback best match (score: ${score}):`, element, this.getElementText(element));
+            }
+        }
+
+        return bestMatch;
     }
 
     isElementInteractable(element) {
