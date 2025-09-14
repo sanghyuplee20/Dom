@@ -15,6 +15,7 @@ class VoiceForwardContent {
         this.setupMessageListener();
         this.initializeVoiceRecognition();
         this.createFloatingIndicator();
+        this.setupWindowResizeHandler();
         this.checkInitialRecordingState();
         console.log('VoiceForward content script loaded');
     }
@@ -468,7 +469,7 @@ class VoiceForwardContent {
             left: ${left}px;
             width: ${size}px;
             height: ${size}px;
-            background: #ff4444;
+            background: #4682b4;
             color: white;
             border-radius: 50%;
             display: flex;
@@ -1096,14 +1097,17 @@ class VoiceForwardContent {
             <div class="vf-indicator-text">REC</div>
         `;
 
+        // Get saved position or use defaults
+        const savedPosition = this.getSavedFloaterPosition();
+
         // Add CSS styles
         this.floatingIndicator.style.cssText = `
             position: fixed !important;
-            top: 20px !important;
-            right: 20px !important;
+            top: ${savedPosition.top}px !important;
+            right: ${savedPosition.right}px !important;
             width: 80px !important;
             height: 35px !important;
-            background: rgba(229, 62, 62, 0.95) !important;
+            background: rgba(102, 126, 234, 0.95) !important;
             color: white !important;
             border-radius: 20px !important;
             display: none !important;
@@ -1117,8 +1121,8 @@ class VoiceForwardContent {
             box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
             backdrop-filter: blur(10px) !important;
             border: 2px solid rgba(255,255,255,0.3) !important;
-            cursor: pointer !important;
-            transition: all 0.3s ease !important;
+            cursor: move !important;
+            transition: none !important;
             user-select: none !important;
         `;
 
@@ -1144,18 +1148,132 @@ class VoiceForwardContent {
             }
             .vf-floating-indicator:hover {
                 transform: scale(1.05) !important;
-                background: rgba(229, 62, 62, 1) !important;
+                background: rgba(102, 126, 234, 1) !important;
+            }
+            .vf-floating-indicator.dragging {
+                transform: scale(1.1) !important;
+                box-shadow: 0 6px 20px rgba(0,0,0,0.4) !important;
+                transition: none !important;
             }
         `;
         document.head.appendChild(style);
 
-        // Add click handler to show status
-        this.floatingIndicator.addEventListener('click', () => {
-            this.showRecordingStatus();
-        });
+        // Initialize drag functionality
+        this.initializeDrag();
 
         // Add to page (initially hidden)
         document.body.appendChild(this.floatingIndicator);
+    }
+
+    getSavedFloaterPosition() {
+        try {
+            const saved = localStorage.getItem('vf-floater-position');
+            if (saved) {
+                const position = JSON.parse(saved);
+                // Validate position is within screen bounds
+                if (position.top >= 0 && position.top <= window.innerHeight - 50 &&
+                    position.right >= 0 && position.right <= window.innerWidth - 100) {
+                    return position;
+                }
+            }
+        } catch (e) {
+            console.log('Could not load saved floater position:', e);
+        }
+        // Return default position
+        return { top: 20, right: 20 };
+    }
+
+    saveFloaterPosition() {
+        if (!this.floatingIndicator) return;
+
+        const rect = this.floatingIndicator.getBoundingClientRect();
+        const position = {
+            top: rect.top,
+            right: window.innerWidth - rect.right
+        };
+
+        try {
+            localStorage.setItem('vf-floater-position', JSON.stringify(position));
+        } catch (e) {
+            console.log('Could not save floater position:', e);
+        }
+    }
+
+    initializeDrag() {
+        if (!this.floatingIndicator) return;
+
+        let isDragging = false;
+        let dragOffset = { x: 0, y: 0 };
+        let dragTimeout = null;
+
+        const onMouseDown = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Clear any existing timeout to prevent click event
+            if (dragTimeout) {
+                clearTimeout(dragTimeout);
+                dragTimeout = null;
+            }
+
+            isDragging = true;
+            this.floatingIndicator.classList.add('dragging');
+
+            const rect = this.floatingIndicator.getBoundingClientRect();
+            dragOffset.x = e.clientX - rect.left;
+            dragOffset.y = e.clientY - rect.top;
+
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        };
+
+        const onMouseMove = (e) => {
+            if (!isDragging) return;
+
+            e.preventDefault();
+
+            let newX = e.clientX - dragOffset.x;
+            let newY = e.clientY - dragOffset.y;
+
+            // Keep within screen bounds
+            const maxX = window.innerWidth - this.floatingIndicator.offsetWidth;
+            const maxY = window.innerHeight - this.floatingIndicator.offsetHeight;
+
+            newX = Math.max(0, Math.min(newX, maxX));
+            newY = Math.max(0, Math.min(newY, maxY));
+
+            this.floatingIndicator.style.left = newX + 'px';
+            this.floatingIndicator.style.top = newY + 'px';
+            this.floatingIndicator.style.right = 'auto';
+        };
+
+        const onMouseUp = (e) => {
+            if (!isDragging) return;
+
+            isDragging = false;
+            this.floatingIndicator.classList.remove('dragging');
+
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+
+            // Save new position
+            this.saveFloaterPosition();
+
+            // Prevent click event from firing after drag
+            dragTimeout = setTimeout(() => {
+                dragTimeout = null;
+            }, 100);
+        };
+
+        const onClick = (e) => {
+            // Only show status if we're not in the middle of a drag operation
+            if (!dragTimeout && !isDragging) {
+                this.showRecordingStatus();
+            }
+        };
+
+        this.floatingIndicator.addEventListener('mousedown', onMouseDown);
+        this.floatingIndicator.addEventListener('click', onClick);
     }
 
     showFloatingIndicator(recording = false) {
@@ -1183,7 +1301,56 @@ class VoiceForwardContent {
                 if (textElement) textElement.textContent = 'READY';
                 if (dotElement) dotElement.style.animation = 'none';
             }
+
+            // Ensure position is still within bounds after window resize
+            this.validateFloaterPosition();
         }
+    }
+
+    validateFloaterPosition() {
+        if (!this.floatingIndicator) return;
+
+        const rect = this.floatingIndicator.getBoundingClientRect();
+        const maxX = window.innerWidth - this.floatingIndicator.offsetWidth;
+        const maxY = window.innerHeight - this.floatingIndicator.offsetHeight;
+
+        let needsUpdate = false;
+        let newX = rect.left;
+        let newY = rect.top;
+
+        if (rect.left < 0) {
+            newX = 0;
+            needsUpdate = true;
+        } else if (rect.left > maxX) {
+            newX = maxX;
+            needsUpdate = true;
+        }
+
+        if (rect.top < 0) {
+            newY = 0;
+            needsUpdate = true;
+        } else if (rect.top > maxY) {
+            newY = maxY;
+            needsUpdate = true;
+        }
+
+        if (needsUpdate) {
+            this.floatingIndicator.style.left = newX + 'px';
+            this.floatingIndicator.style.top = newY + 'px';
+            this.floatingIndicator.style.right = 'auto';
+            this.saveFloaterPosition();
+        }
+    }
+
+    setupWindowResizeHandler() {
+        let resizeTimeout;
+        window.addEventListener('resize', () => {
+            // Debounce resize events to avoid excessive position updates
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                this.validateFloaterPosition();
+            }, 250);
+        });
     }
 
     hideFloatingIndicator() {
