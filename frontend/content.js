@@ -12,6 +12,7 @@ class VoiceForwardContent {
         this.isWaitingForWakeWord = true;
         this.wakeWord = 'hey dom';
         this.currentUrl = window.location.href;
+        this.shouldAutoRestart = true; // Flag to control auto-restart behavior
 
         this.setupMessageListener();
         this.initializeVoiceRecognition();
@@ -59,6 +60,8 @@ class VoiceForwardContent {
                     break;
 
                 case 'stopRecordingFromVoice':
+                    // This is called when voice command stops recording from background
+                    this.shouldAutoRestart = false;
                     this.stopVoiceRecording();
                     sendResponse({ success: true });
                     break;
@@ -1170,6 +1173,7 @@ class VoiceForwardContent {
                         // Check for "stop recording" command
                         if (this.isStopRecordingCommand(fullCommand)) {
                             console.log('Stop recording command detected (timeout)');
+                            this.shouldAutoRestart = false; // Disable auto-restart
                             this.showFloatingIndicator(false);
                             chrome.runtime.sendMessage({ type: 'stopRecordingCommand' });
                             this.sendMessageToPopup({
@@ -1214,6 +1218,7 @@ class VoiceForwardContent {
                 // Check for "stop recording" command
                 if (this.isStopRecordingCommand(command)) {
                     console.log('Stop recording command detected');
+                    this.shouldAutoRestart = false; // Disable auto-restart
                     this.showFloatingIndicator(false);
                     chrome.runtime.sendMessage({ type: 'stopRecordingCommand' });
                     this.sendMessageToPopup({
@@ -1282,22 +1287,29 @@ class VoiceForwardContent {
 
             this.sendMessageToPopup({ type: 'voiceStatusChanged', status: 'ready' });
 
-            // Auto-restart recognition for continuous listening (but with clean state)
-            setTimeout(() => {
-                if (!this.isListening && this.recognition) {
-                    try {
-                        console.log('Auto-restarting voice recognition with clean state...');
-                        this.recognition.start();
-                    } catch (error) {
-                        console.log('Could not auto-restart recognition:', error);
+            // Only auto-restart if shouldAutoRestart is true (continuous listening mode)
+            if (this.shouldAutoRestart) {
+                setTimeout(() => {
+                    if (!this.isListening && this.recognition && this.shouldAutoRestart) {
+                        try {
+                            console.log('Auto-restarting voice recognition with clean state...');
+                            this.recognition.start();
+                        } catch (error) {
+                            console.log('Could not auto-restart recognition:', error);
+                        }
                     }
-                }
-            }, 100); // Short delay to ensure clean restart
+                }, 100); // Short delay to ensure clean restart
+            } else {
+                console.log('Voice recognition stopped - auto-restart disabled');
+            }
         };
     }
 
     startVoiceRecording() {
         if (this.isListening || !this.recognition) return;
+
+        // Enable auto-restart when starting recording
+        this.shouldAutoRestart = true;
 
         try {
             this.recognition.start();
@@ -1314,6 +1326,9 @@ class VoiceForwardContent {
     stopVoiceRecording() {
         if (!this.isListening || !this.recognition) return;
 
+        // Disable auto-restart when user explicitly stops recording
+        this.shouldAutoRestart = false;
+
         // Clear any pending timeout
         if (this.interimTimeout) {
             clearTimeout(this.interimTimeout);
@@ -1322,7 +1337,7 @@ class VoiceForwardContent {
 
         this.recognition.stop();
         this.showFloatingIndicator(false);
-        console.log('Stopping voice recognition...');
+        console.log('Stopping voice recognition... (auto-restart disabled)');
     }
 
     async processVoiceCommand(command) {
@@ -1398,6 +1413,9 @@ class VoiceForwardContent {
 
     async restartVoiceRecording() {
         console.log('Restarting voice recording on new page...');
+
+        // Enable auto-restart when restarting recording
+        this.shouldAutoRestart = true;
 
         // Wait a moment for the page to fully load
         setTimeout(() => {
