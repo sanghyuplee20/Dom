@@ -245,7 +245,7 @@ class VoiceForwardPopup {
         });
 
         // Show ready status initially
-        this.showVoiceStatus('Click "Start Recording" to begin voice input', 'ready');
+        this.showVoiceStatus('Wake word listening active - say "Hey Dom" to start', 'ready');
     }
 
     async startRecording() {

@@ -3,6 +3,7 @@
 class VoiceForwardBackground {
     constructor() {
         this.isRecordingActive = false;
+        this.isActivated = false; // Track if "Hey Dom" has been said
         this.setupEventListeners();
         console.log('VoiceForward background script loaded');
     }
@@ -26,12 +27,27 @@ class VoiceForwardBackground {
                     break;
 
                 case 'getRecordingState':
-                    sendResponse({ isRecording: this.isRecordingActive });
+                    sendResponse({
+                        isRecording: this.isRecordingActive,
+                        isActivated: this.isActivated
+                    });
+                    break;
+
+                case 'setActivationState':
+                    this.isActivated = message.isActivated;
+                    console.log('Activation state updated:', this.isActivated);
+                    // When activated, also mark as recording active
+                    if (this.isActivated) {
+                        this.isRecordingActive = true;
+                    }
+                    this.updateBadge();
+                    sendResponse({ success: true });
                     break;
 
                 case 'stopRecordingCommand':
                     // Voice command to stop recording
                     this.isRecordingActive = false;
+                    this.isActivated = false; // Also deactivate
                     this.updateBadge();
                     // Notify all tabs to stop recording
                     this.notifyAllTabs({ type: 'stopRecordingFromVoice' });
@@ -75,10 +91,14 @@ class VoiceForwardBackground {
     }
 
     updateBadge() {
-        if (this.isRecordingActive) {
+        if (this.isActivated) {
             chrome.action.setBadgeText({ text: '🔴' });
             chrome.action.setBadgeBackgroundColor({ color: '#ff4444' });
-            chrome.action.setTitle({ title: 'VoiceForward - Recording Active' });
+            chrome.action.setTitle({ title: 'VoiceForward - Activated (REC)' });
+        } else if (this.isRecordingActive) {
+            chrome.action.setBadgeText({ text: '🟡' });
+            chrome.action.setBadgeBackgroundColor({ color: '#ffaa00' });
+            chrome.action.setTitle({ title: 'VoiceForward - Ready (say "Hey Dom")' });
         } else {
             chrome.action.setBadgeText({ text: '' });
             chrome.action.setTitle({ title: 'VoiceForward Test' });

@@ -11,6 +11,7 @@ class VoiceForwardContent {
         this.floatingIndicator = null;
         this.isWaitingForWakeWord = true;
         this.wakeWord = 'hey dom';
+        this.isActivated = false; // Track if we're in persistent recording mode
         this.currentUrl = window.location.href;
         this.shouldAutoRestart = true; // Flag to control auto-restart behavior
 
@@ -18,8 +19,8 @@ class VoiceForwardContent {
         this.initializeVoiceRecognition();
         this.createFloatingIndicator();
         this.setupWindowResizeHandler();
-        this.checkInitialRecordingState();
-        console.log('VoiceForward content script loaded');
+        this.checkActivationState();
+        console.log('VoiceForward content script loaded with passive wake word listening');
     }
     
     setupMessageListener() {
@@ -1133,7 +1134,8 @@ class VoiceForwardContent {
         this.recognition.onstart = () => {
             console.log('Voice recognition started');
             this.isListening = true;
-            this.showFloatingIndicator(true); // true = recording active
+            // Show appropriate indicator based on activation state
+            this.showFloatingIndicator(this.isActivated);
             this.sendMessageToPopup({ type: 'voiceStatusChanged', status: 'listening' });
         };
 
@@ -1150,7 +1152,52 @@ class VoiceForwardContent {
                 }
             }
 
-            // Handle interim results with 2-second auto-execution
+            const fullTranscript = (finalTranscript + interimTranscript).trim().toLowerCase();
+            console.log('Full transcript:', fullTranscript, 'Activated:', this.isActivated);
+
+            // If not activated yet, check for wake word
+            if (!this.isActivated) {
+                const wakeWordVariations = ['hey dom', 'hey don', 'a dom', 'hey dumb', 'hey tom'];
+                const detectedWakeWord = wakeWordVariations.find(variation => fullTranscript.includes(variation));
+
+                if (detectedWakeWord) {
+                    console.log('Wake word detected - activating persistent recording mode');
+                    this.isActivated = true;
+                    this.showFloatingIndicator(true); // Show REC
+
+                    // Save activation state to background
+                    chrome.runtime.sendMessage({
+                        type: 'setActivationState',
+                        isActivated: true
+                    });
+
+                    // Extract command after wake word
+                    const wakeWordIndex = fullTranscript.indexOf(detectedWakeWord);
+                    const commandAfterWakeWord = fullTranscript.substring(wakeWordIndex + detectedWakeWord.length).trim();
+
+                    if (commandAfterWakeWord.length > 2) {
+                        // Process command immediately if there's more speech after wake word
+                        console.log('Processing command after activation:', commandAfterWakeWord);
+                        this.sendMessageToPopup({
+                            type: 'transcriptionComplete',
+                            text: commandAfterWakeWord
+                        });
+                        this.processVoiceCommand(commandAfterWakeWord);
+                        return;
+                    }
+
+                    // Send status update
+                    this.sendMessageToPopup({
+                        type: 'transcriptionUpdate',
+                        text: 'Activated - listening for commands...'
+                    });
+                    return;
+                }
+                // Still waiting for wake word, don't process anything else
+                return;
+            }
+
+            // We're past wake word, now listening for actual commands
             if (interimTranscript && interimTranscript.trim().length > 2) {
                 const fullCommand = (finalTranscript + interimTranscript).trim();
 
@@ -1172,13 +1219,19 @@ class VoiceForwardContent {
 
                         // Check for "stop recording" command
                         if (this.isStopRecordingCommand(fullCommand)) {
-                            console.log('Stop recording command detected (timeout)');
-                            this.shouldAutoRestart = false; // Disable auto-restart
-                            this.showFloatingIndicator(false);
-                            chrome.runtime.sendMessage({ type: 'stopRecordingCommand' });
+                            console.log('Stop recording command detected - deactivating');
+                            this.isActivated = false;
+                            this.showFloatingIndicator(false); // Show READY
+
+                            // Save deactivation state to background
+                            chrome.runtime.sendMessage({
+                                type: 'setActivationState',
+                                isActivated: false
+                            });
+
                             this.sendMessageToPopup({
                                 type: 'recordingStopped',
-                                text: 'Recording stopped by voice command'
+                                text: 'Recording deactivated - say "Hey Dom" to reactivate'
                             });
                             return;
                         }
@@ -1188,6 +1241,8 @@ class VoiceForwardContent {
                             text: fullCommand
                         });
                         this.processVoiceCommand(fullCommand);
+
+                        // Stay in activated mode - don't reset
 
                         // Clear the interim timeout and restart recognition with clean state
                         if (this.interimTimeout) {
@@ -1217,13 +1272,19 @@ class VoiceForwardContent {
 
                 // Check for "stop recording" command
                 if (this.isStopRecordingCommand(command)) {
-                    console.log('Stop recording command detected');
-                    this.shouldAutoRestart = false; // Disable auto-restart
-                    this.showFloatingIndicator(false);
-                    chrome.runtime.sendMessage({ type: 'stopRecordingCommand' });
+                    console.log('Stop recording command detected - deactivating');
+                    this.isActivated = false;
+                    this.showFloatingIndicator(false); // Show READY
+
+                    // Save deactivation state to background
+                    chrome.runtime.sendMessage({
+                        type: 'setActivationState',
+                        isActivated: false
+                    });
+
                     this.sendMessageToPopup({
                         type: 'recordingStopped',
-                        text: 'Recording stopped by voice command'
+                        text: 'Recording deactivated - say "Hey Dom" to reactivate'
                     });
                     return;
                 }
@@ -1233,6 +1294,8 @@ class VoiceForwardContent {
                     text: command
                 });
                 this.processVoiceCommand(command);
+
+                // Stay in activated mode - don't reset
 
                 // Clear any pending timeout and restart recognition for next command
                 if (this.interimTimeout) {
@@ -1256,11 +1319,14 @@ class VoiceForwardContent {
             let errorMessage = 'Voice recognition error: ';
             switch (event.error) {
                 case 'not-allowed':
-                    errorMessage += 'Microphone access denied. Please allow microphone access and try again.';
+                    errorMessage += 'Microphone access needed. Click the extension popup and allow microphone access.';
+                    // Show a more prominent message for permission issues
+                    this.showPermissionPrompt();
                     break;
                 case 'no-speech':
-                    errorMessage += 'No speech detected.';
-                    break;
+                    // This is normal during wake word listening, don't show error
+                    console.log('No speech detected, continuing to listen...');
+                    return;
                 case 'audio-capture':
                     errorMessage += 'Microphone not available.';
                     break;
@@ -1310,10 +1376,12 @@ class VoiceForwardContent {
 
         // Enable auto-restart when starting recording
         this.shouldAutoRestart = true;
+        // Reset activation state if manually starting
+        this.isActivated = false;
 
         try {
             this.recognition.start();
-            console.log('Starting voice recognition...');
+            console.log('Starting voice recognition - waiting for wake word "' + this.wakeWord + '"...');
         } catch (error) {
             console.error('Failed to start recognition:', error);
             this.sendMessageToPopup({
@@ -1492,6 +1560,11 @@ class VoiceForwardContent {
                 50% { opacity: 0.6; transform: scale(1.2); }
                 100% { opacity: 1; transform: scale(1); }
             }
+            @keyframes vf-slow-pulse {
+                0% { opacity: 0.7; transform: scale(1); }
+                50% { opacity: 1; transform: scale(1.1); }
+                100% { opacity: 0.7; transform: scale(1); }
+            }
             .vf-floating-indicator:hover {
                 transform: scale(1.05) !important;
                 background: rgba(102, 126, 234, 1) !important;
@@ -1639,7 +1712,7 @@ class VoiceForwardContent {
                 if (textElement) textElement.textContent = 'REC';
                 if (dotElement) dotElement.style.animation = 'vf-pulse 1s infinite';
             } else {
-                // Ready but not recording state - blue without pulsing
+                // Ready state - blue without pulsing
                 this.floatingIndicator.style.background = 'rgba(102, 126, 234, 0.9)';
                 const textElement = this.floatingIndicator.querySelector('.vf-indicator-text');
                 const dotElement = this.floatingIndicator.querySelector('.vf-indicator-dot');
@@ -1705,6 +1778,45 @@ class VoiceForwardContent {
         }
     }
 
+    showPermissionPrompt() {
+        // Create permission prompt popup
+        const permissionPopup = document.createElement('div');
+        permissionPopup.style.cssText = `
+            position: fixed !important;
+            top: 50% !important;
+            left: 50% !important;
+            transform: translate(-50%, -50%) !important;
+            padding: 20px !important;
+            background: rgba(239, 68, 68, 0.95) !important;
+            color: white !important;
+            border-radius: 12px !important;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+            font-size: 14px !important;
+            z-index: 9999999 !important;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4) !important;
+            backdrop-filter: blur(10px) !important;
+            border: 2px solid rgba(255,255,255,0.3) !important;
+            max-width: 300px !important;
+            text-align: center !important;
+        `;
+        permissionPopup.innerHTML = `
+            <div style="font-weight: bold; margin-bottom: 8px; font-size: 16px;">🎤 Microphone Access Required</div>
+            <div style="margin-bottom: 12px;">To use "Hey Dom" wake word, please:</div>
+            <div style="margin-bottom: 8px;">1. Click the extension icon</div>
+            <div style="margin-bottom: 12px;">2. Click "Start Recording" to grant permissions</div>
+            <div style="font-size: 11px; opacity: 0.8;">This popup will disappear automatically</div>
+        `;
+
+        document.body.appendChild(permissionPopup);
+
+        // Remove after 8 seconds
+        setTimeout(() => {
+            if (permissionPopup.parentNode) {
+                permissionPopup.remove();
+            }
+        }, 8000);
+    }
+
     showRecordingStatus() {
         // Create temporary status popup
         const statusPopup = document.createElement('div');
@@ -1725,8 +1837,9 @@ class VoiceForwardContent {
             max-width: 200px !important;
         `;
         statusPopup.innerHTML = `
-            <div style="font-weight: bold; margin-bottom: 4px;">VoiceForward Recording Active</div>
-            <div style="font-size: 11px; opacity: 0.8;">Say "stop recording" to end</div>
+            <div style="font-weight: bold; margin-bottom: 4px;">VoiceForward Wake Word Active</div>
+            <div style="font-size: 11px; opacity: 0.8;">Say "Hey Dom" followed by your command</div>
+            <div style="font-size: 10px; opacity: 0.6; margin-top: 2px;">Say "stop recording" to end</div>
         `;
 
         document.body.appendChild(statusPopup);
@@ -1739,25 +1852,66 @@ class VoiceForwardContent {
         }, 3000);
     }
 
-    async checkInitialRecordingState() {
-        // Always show the indicator immediately when page loads
-        this.showFloatingIndicator(false);
+    async checkActivationState() {
+        console.log('Checking activation state from background...');
 
         try {
-            // Check if recording should be active from background state
+            // Check if we should be in activated mode from background state
             const response = await chrome.runtime.sendMessage({ type: 'getRecordingState' });
-            if (response && response.isRecording) {
-                console.log('Initial check: Recording should be active, starting...');
-                this.showFloatingIndicator(true);
-                // Start recording automatically
-                setTimeout(() => {
-                    this.startVoiceRecording();
-                }, 500);
+            if (response && response.isActivated) {
+                console.log('Restoring activated state from background');
+                this.isActivated = true;
+                this.showFloatingIndicator(true); // Show REC
+            } else {
+                console.log('Starting in ready mode');
+                this.isActivated = false;
+                this.showFloatingIndicator(false); // Show READY
             }
+
+            // Enable auto-restart and start listening
+            this.shouldAutoRestart = true;
+
+            // Wait a moment for page to settle, then start listening
+            setTimeout(() => {
+                if (!this.isListening && this.recognition) {
+                    try {
+                        this.recognition.start();
+                        console.log('Voice recognition started, activation state:', this.isActivated);
+                    } catch (error) {
+                        console.error('Failed to start voice recognition:', error);
+                        // Retry in 2 seconds
+                        setTimeout(() => {
+                            this.checkActivationState();
+                        }, 2000);
+                    }
+                }
+            }, 1000);
+
         } catch (error) {
-            console.log('Could not check initial recording state:', error);
-            // Keep indicator showing even if background check fails
+            console.log('Could not check activation state:', error);
+            // Default to ready mode
+            this.isActivated = false;
+            this.showFloatingIndicator(false);
+            this.shouldAutoRestart = true;
+
+            // Start listening anyway
+            setTimeout(() => {
+                if (!this.isListening && this.recognition) {
+                    try {
+                        this.recognition.start();
+                        console.log('Voice recognition started in fallback mode');
+                    } catch (error) {
+                        console.error('Fallback start failed:', error);
+                    }
+                }
+            }, 1000);
         }
+    }
+
+    async checkInitialRecordingState() {
+        // This method is now replaced by autoStartWakeWordListening
+        // but keeping it for compatibility with existing popup behavior
+        console.log('Legacy checkInitialRecordingState called');
     }
 }
 
